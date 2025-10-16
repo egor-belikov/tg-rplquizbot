@@ -1,0 +1,9 @@
+Flask
+Flask-SocketIO
+Flask-SQLAlchemy
+glicko2
+fuzzywuzzy
+python-Levenshtein
+eventlet
+gunicorn
+psycopg2-binary
