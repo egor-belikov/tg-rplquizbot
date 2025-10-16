@@ -4,18 +4,21 @@ name: Fly Deploy
 
 on:
   push:
-    # Make sure this is the branch you want to deploy from
     branches:
-      - main 
+      - main # Убедись, что это твоя основная ветка
 
 jobs:
   deploy:
     name: Deploy app
     runs-on: ubuntu-latest
     steps:
+      # Шаг 1: Скачиваем код из репозитория
       - uses: actions/checkout@v4
-      # The corrected line is here:
+
+      # Шаг 2: Устанавливаем утилиту flyctl (правильный путь!)
       - uses: superfly/fly-actions/setup-flyctl@master
+
+      # Шаг 3: Запускаем развертывание
       - run: flyctl deploy --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
