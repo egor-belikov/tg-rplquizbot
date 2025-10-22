@@ -25,10 +25,8 @@ if not TELEGRAM_BOT_TOKEN:
 # Константы
 PAUSE_BETWEEN_ROUNDS = 10
 TYPO_THRESHOLD = 85
-# --- ИЗМЕНЕНИЕ: Добавлены константы валидации ---
 MIN_TIME_BANK = 30.0
 MAX_TIME_BANK = 300.0
-# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 # Настройка Flask, SQLAlchemy
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -60,6 +58,9 @@ with app.app_context():
 # Глобальные переменные для отслеживания состояния
 active_games, open_games = {}, {}
 lobby_sids = set()
+# --- ИЗМЕНЕНИЕ: Отслеживание сессий ---
+tg_id_to_sid, sid_to_tg_id = {}, {}
+# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 # --- Вспомогательные функции ---
 
@@ -180,21 +181,18 @@ class GameState:
         if not self.all_clubs_data: print(f"[WARNING] Данные для лиги '{league}' не найдены!")
         max_clubs_in_league = len(self.all_clubs_data)
         
-        # --- ИЗМЕНЕНИЕ: Валидация Time Bank внутри GameState ---
         default_time = 90.0
         try:
-            # Валидация (MIN/MAX) происходит на уровне socket, здесь просто приводим тип
             time_bank_setting = float(temp_settings.get('time_bank', default_time))
         except (ValueError, TypeError):
             time_bank_setting = default_time
-        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
         default_settings = {'num_rounds': max_clubs_in_league, 'time_bank': time_bank_setting, 'league': league}
         
         self.settings = default_settings
         if settings:
             self.settings.update(settings)
-        self.settings['time_bank'] = time_bank_setting # Гарантируем, что в settings лежит валидное значение
+        self.settings['time_bank'] = time_bank_setting 
 
         selected_clubs = self.settings.get('selected_clubs')
         num_rounds_setting = self.settings.get('num_rounds', 0)
@@ -471,6 +469,15 @@ def handle_connect():
 def handle_disconnect():
     sid = request.sid
     print(f"[CONNECTION] Client disconnected: {sid}")
+    
+    # --- ИЗМЕНЕНИЕ: Очистка карт сессий ---
+    if sid in sid_to_tg_id:
+        tg_id = sid_to_tg_id.pop(sid)
+        if tg_id in tg_id_to_sid and tg_id_to_sid[tg_id] == sid:
+            del tg_id_to_sid[tg_id]
+            print(f"[AUTH] Cleaned up SID/TGID mapping for {tg_id}.")
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
     remove_player_from_lobby(sid)
     room_to_delete = next((rid for rid, g in open_games.items() if g['creator']['sid'] == sid), None)
     if room_to_delete:
@@ -575,6 +582,18 @@ def handle_telegram_login(data):
     if not tg_id:
         emit('auth_status', {'success': False, 'message': 'No TG ID.'})
         return
+
+    # --- ИЗМЕНЕНИЕ: Логика мульти-устройств ---
+    if tg_id in tg_id_to_sid:
+        old_sid = tg_id_to_sid.get(tg_id)
+        if old_sid and old_sid != sid:
+            print(f"[AUTH] TG ID {tg_id} duplicate login. Disconnecting old SID: {old_sid}")
+            socketio.emit('force_disconnect', {'message': 'Вы вошли с другого устройства.'}, room=old_sid)
+            socketio.disconnect(old_sid) # Это вызовет handle_disconnect для old_sid
+    tg_id_to_sid[tg_id] = sid
+    sid_to_tg_id[sid] = tg_id
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
     with app.app_context():
         user = User.query.filter_by(telegram_id=tg_id).first()
         if user:
@@ -597,6 +616,14 @@ def handle_set_username(data):
     if not nick or not re.match(r'^[a-zA-Z0-9_-]{3,20}$', nick):
         emit('auth_status', {'success': False, 'message': 'Nick: 3-20 chars (a-z,0-9,_, -).'})
         return
+    
+    # --- ИЗМЕНЕНИЕ: Проверяем, что SID/TG_ID все еще совпадает ---
+    if sid_to_tg_id.get(sid) != tg_id or tg_id_to_sid.get(tg_id) != sid:
+         print(f"[AUTH] Mismatch SID/TGID on set_username. SID: {sid}, TG_ID: {tg_id}")
+         emit('auth_status', {'success': False, 'message': 'Ошибка сессии, перезагрузите.'})
+         return
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
     with app.app_context():
         if User.query.filter_by(nickname=nick).first():
             emit('auth_status', {'success': False, 'message': 'Nickname taken.'})
@@ -613,6 +640,10 @@ def handle_set_username(data):
             emit('auth_status', {'success': True, 'nickname': new_user.nickname})
             emit_lobby_update()
         except Exception as e:
+            # --- ИЗМЕНЕНИЕ: Откат карт сессий при ошибке ---
+            if tg_id in tg_id_to_sid: del tg_id_to_sid[tg_id]
+            if sid in sid_to_tg_id: del sid_to_tg_id[sid]
+            # --- КОНЕЦ ИЗМЕНЕНИЯ ---
             db.session.rollback()
             print(f"[ERROR] Create user {nick}: {e}")
             emit('auth_status', {'success': False, 'message': 'Registration error.'})
@@ -635,7 +666,7 @@ def handle_request_skip_pause(data):
         player_index = next((i for i, p in game.players.items() if p.get('sid') == sid), -1)
         if player_index != -1 and game_session.get('pause_id'):
             game_session['skip_votes'].add(player_index)
-            emit('skip_vote_accepted') # --- ИЗМЕНЕНИЕ: Отправляем подтверждение
+            emit('skip_vote_accepted')
             socketio.emit('skip_vote_update', {'count': len(game_session['skip_votes'])}, room=room_id)
             print(f"[GAME] {room_id}: Skip vote by {game.players[player_index]['nickname']} ({len(game_session['skip_votes'])}/{len(game.players)}).")
             if len(game_session['skip_votes']) >= len(game.players):
@@ -667,18 +698,16 @@ def handle_start_game(data):
         print(f"[SECURITY] {nick} ({sid}) busy, start rejected.")
         return
     if mode == 'solo':
-        # --- ИЗМЕНЕНИЕ: Валидация Time Bank ---
         try:
             time_bank = float(settings.get('time_bank', 90.0))
             if not (MIN_TIME_BANK <= time_bank <= MAX_TIME_BANK):
                 print(f"[ERROR] {nick} ({sid}) invalid time bank (solo): {time_bank}.")
                 emit('start_game_fail', {'message': f'Время: {MIN_TIME_BANK}-{MAX_TIME_BANK} сек.'})
                 return
-            settings['time_bank'] = time_bank # Сохраняем float
+            settings['time_bank'] = time_bank
         except (ValueError, TypeError):
             emit('start_game_fail', {'message': 'Неверный формат времени.'})
             return
-        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
         p1_info = {'sid': sid, 'nickname': nick}
         room_id = str(uuid.uuid4())
@@ -719,18 +748,16 @@ def handle_create_game(data):
         print(f"[SECURITY] {nick} ({sid}) busy, create rejected.")
         return
         
-    # --- ИЗМЕНЕНИЕ: Валидация Time Bank ---
     try:
         time_bank = float(settings.get('time_bank', 90.0))
         if not (MIN_TIME_BANK <= time_bank <= MAX_TIME_BANK):
             print(f"[ERROR] {nick} ({sid}) invalid time bank (pvp): {time_bank}.")
             emit('create_game_fail', {'message': f'Время: {MIN_TIME_BANK}-{MAX_TIME_BANK} сек.'})
             return
-        settings['time_bank'] = time_bank # Сохраняем float
+        settings['time_bank'] = time_bank
     except (ValueError, TypeError):
         emit('create_game_fail', {'message': 'Неверный формат времени.'})
         return
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
     try:
         temp_game = GameState({'nickname': nick}, all_leagues_data, mode='pvp', settings=settings)
@@ -771,6 +798,16 @@ def handle_join_game(data):
     if is_player_busy(joiner_sid):
         print(f"[SECURITY] {joiner_nick} ({joiner_sid}) busy, join rejected.")
         return
+    
+    # --- ИЗМЕНЕНИЕ: Проверка на игру с самим собой ---
+    joiner_tg_id = sid_to_tg_id.get(joiner_sid)
+    creator_tg_id = sid_to_tg_id.get(creator_sid)
+    if joiner_tg_id and creator_tg_id and joiner_tg_id == creator_tg_id:
+        print(f"[SECURITY] {joiner_nick} ({joiner_tg_id}) attempted to join own game.")
+        emit('join_game_fail', {'message': 'Нельзя играть с самим собой.'})
+        return
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
     room_id = next((rid for rid, g in open_games.items() if g['creator']['sid'] == creator_sid), None)
     if not room_id:
         print(f"[LOBBY] {joiner_nick} join to {creator_sid} failed (not found).")
@@ -885,9 +922,10 @@ def handle_submit_guess(data):
             print(f"[TIMEOUT] {room_id}: {nick} correct but time ran out.")
             on_timer_end(room_id)
             return
+        
         game.add_named_player(result['player_data'], game.current_player_index)
-        socketio.emit('turn_updated', get_game_state_for_client(game_session, room_id), room=room_id)
         emit('guess_result', {'result': result['result'], 'corrected_name': result['player_data']['full_name']})
+        
         if game.is_round_over():
             print(f"[ROUND_END] {room_id}: Round complete (all named). Draw 0.5-0.5")
             game_session['last_round_end_reason'] = 'completed'
@@ -896,6 +934,11 @@ def handle_submit_guess(data):
                 game.scores[1] += 0.5
                 game_session['last_round_winner_index'] = 'draw'
             show_round_summary_and_schedule_next(room_id)
+        else:
+            # --- ИЗМЕНЕНИЕ: Исправление бага с таймером ---
+            # Сбрасываем таймер и запускаем ход для следующего (или того же) игрока
+            start_next_human_turn(room_id)
+            # --- КОНЕЦ ИЗМЕНЕНИЯ ---
     else:
         emit('guess_result', {'result': result['result']})
 
