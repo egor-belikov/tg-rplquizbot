@@ -19,8 +19,7 @@
         button:hover { background-color: var(--accent-hover-color); }
         button:disabled { background-color: var(--secondary-color); cursor: not-allowed; }
         input[type="text"], input[type="number"], select { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid var(--secondary-color); background-color: var(--primary-color); color: var(--text-color); font-size: 16px; box-sizing: border-box; }
-        /* --- ИСПРАВЛЕНИЕ: стиль для НЕзаблокированного инпута (Request 1) --- */
-        input[type="text"]:disabled { background-color: #222; } /* Остается на случай */
+        input[type="text"]:disabled { background-color: #222; }
         .container { width: 100%; max-width: 600px; margin: 0 auto; text-align: center; }
         #loading-screen { justify-content: center; }
         .loader { border: 8px solid var(--secondary-color); border-top: 8px solid var(--accent-color); border-radius: 50%; width: 60px; height: 60px; animation: spin 1s linear infinite; }
@@ -37,7 +36,7 @@
         #leaderboard-screen table, #game-over-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         #leaderboard-screen th, #leaderboard-screen td, #game-over-table th, #game-over-table td { padding: 10px; border-bottom: 1px solid var(--secondary-color); text-align: left; }
         #game-over-table th { background-color: var(--primary-color); }
-        
+
         .cancel-btn { background-color: var(--cancel-color); }
         .cancel-btn:hover { background-color: #c45a54; }
 
@@ -75,14 +74,7 @@
         }
         .summary-list-wrapper.scrolled-to-bottom::after { opacity: 0; }
         #summary-player-list { list-style: none; padding: 0; margin: 0; text-align: left; }
-        
-        /* --- НОВЫЙ СТИЛЬ: Таймер на экране Summary (Request 5) --- */
-        #summary-countdown {
-            text-align: center;
-            font-size: 20px;
-            font-weight: bold;
-            margin-bottom: 10px;
-        }
+        #summary-countdown { text-align: center; font-size: 20px; font-weight: bold; margin-bottom: 10px; }
 
         #game-over-screen .container { text-align: left; }
         #game-over-screen h2, #game-over-screen h3 { text-align: center; }
@@ -90,7 +82,7 @@
         #game-over-reason { text-align: center; font-style: italic; color: #aaa; }
         #game-over-ratings { text-align: center; margin-top: 15px; margin-bottom: 20px; }
         #game-over-back-btn { width: 100%; margin-top: 20px; }
-        
+
     </style>
 </head>
 <body>
@@ -98,7 +90,7 @@
     <div id="loading-screen" class="screen active"><div class="container"><div class="loader"></div><p>Подключение...</p></div></div>
     <div id="nickname-screen" class="screen"><div class="container"><h2>Добро пожаловать!</h2><p>Придумайте себе уникальный никнейм.</p><input type="text" id="nickname-input" placeholder="Введите ваш никнейм"><button id="submit-nickname-btn">Сохранить</button><p id="nickname-error" style="color: var(--incorrect-color);"></p></div></div>
     <div id="lobby-screen" class="screen"><div class="container"><h1>Лобби</h1><p id="welcome-message"></p><div id="lobby-stats"></div><div class="lobby-actions" style="display: flex; justify-content: space-around; margin-bottom: 20px;"><button id="create-game-btn">Создать игру</button><button id="start-training-btn">Тренировка</button><button id="show-leaderboard-btn">Рейтинг</button></div><h2>Открытые игры:</h2><div id="open-games-list"></div></div></div>
-    
+
     <div id="settings-screen" class="screen">
         <div class="container">
             <h2 id="settings-title">Настройки Игры</h2>
@@ -129,7 +121,7 @@
             </div>
 
             <p id="settings-error-msg"></p>
-            
+
             <div class="button-row">
                 <button id="back-to-lobby-btn" class="secondary-btn">Назад</button>
                 <button id="confirm-create-game-btn" disabled>Создать PvP Игру</button>
@@ -137,7 +129,7 @@
             </div>
         </div>
     </div>
-    
+
     <div id="game-screen" class="screen">
         <div class="container">
             <div class="game-header">
@@ -159,20 +151,20 @@
             <h2 id="summary-title">Раунд завершен!</h2>
             <h3 id="summary-club-name"></h3>
             <p><strong>Текущий счет: <span id="summary-score"></span></strong></p>
-            
+
             <div class="summary-list-wrapper">
                 <h4>Весь состав:</h4>
                 <div id="summary-list-container">
                     <ul id="summary-player-list"></ul>
                 </div>
             </div>
-            
-            <p id="summary-countdown">10</p> 
-            
+
+            <p id="summary-countdown">10</p>
+
             <button id="skip-pause-btn" style="width: 100%; margin-top: 10px;">Следующий раунд</button>
         </div>
     </div>
-    
+
     <div id="leaderboard-screen" class="screen">
         <div class="container">
             <h2>Таблица Лидеров</h2>
@@ -190,7 +182,7 @@
             <p id="game-over-score">Счет 0 - 0</p>
             <p id="game-over-reason">Причина...</p>
             <p id="game-over-ratings">Изменение рейтинга...</p>
-            
+
             <h3>История раундов</h3>
             <table id="game-over-table">
                 <thead>
@@ -202,7 +194,7 @@
                 </thead>
                 <tbody></tbody>
             </table>
-            
+
             <button id="game-over-back-btn">В лобби</button>
         </div>
     </div>
@@ -216,14 +208,13 @@
             tg.ready();
             tg.expand();
 
-            let localState = { 
-                nickname: null, telegramId: null, currentRoomId: null, 
+            let localState = {
+                nickname: null, telegramId: null, currentRoomId: null,
                 myPlayerIndex: null, maxClubsInLeague: 16
             };
-            let gameTimerInterval = null; 
-            // --- НОВЫЙ ТАЙМЕР: Для экрана Summary (Request 5) ---
-            let summaryCountdownInterval = null; 
-            
+            let gameTimerInterval = null;
+            let summaryCountdownInterval = null;
+
             const screens = {
                 loading: document.getElementById('loading-screen'),
                 nickname: document.getElementById('nickname-screen'),
@@ -249,7 +240,6 @@
             const openGamesList = document.getElementById('open-games-list');
             const summaryListContainer = document.getElementById('summary-list-container');
             const gameOverBackBtn = document.getElementById('game-over-back-btn');
-            // --- НОВЫЙ ЭЛЕМЕНТ: Дисплей таймера (Request 5) ---
             const summaryCountdownDisplay = document.getElementById('summary-countdown');
 
 
@@ -262,7 +252,7 @@
             gameOverBackBtn.addEventListener('click', () => showScreen('lobby'));
 
             function showScreen(screenName) {
-                // Очищаем таймер summary, если уходим с него
+                // Очищаем таймер summary ПЕРЕД сменой экрана
                 if (summaryCountdownInterval) {
                     clearInterval(summaryCountdownInterval);
                     summaryCountdownInterval = null;
@@ -286,13 +276,15 @@
                 }
             });
 
-            // --- ИСПРАВЛЕНИЕ: ДОБАВЛЕН ЗАПУСК ТАЙМЕРА (Request 5) ---
+            // --- ИСПРАВЛЕНИЕ: ПОРЯДОК ЗАПУСКА ТАЙМЕРА ---
             socket.on('round_summary', (data) => {
-                if (gameTimerInterval) clearInterval(gameTimerInterval); 
-                
+                // Очищаем старые таймеры
+                if (gameTimerInterval) clearInterval(gameTimerInterval);
+                if (summaryCountdownInterval) clearInterval(summaryCountdownInterval); // Доп. очистка
+
                 summaryListContainer.parentElement.classList.remove('scrolled-to-bottom');
-                summaryListContainer.scrollTop = 0; 
-                
+                summaryListContainer.scrollTop = 0;
+
                 document.getElementById('summary-club-name').textContent = data.clubName;
                 const p1_score = data.scores[0] || 0;
                 const p2_score = data.scores[1] || 0;
@@ -300,7 +292,7 @@
 
                 const summaryList = document.getElementById('summary-player-list');
                 summaryList.innerHTML = '';
-                
+
                 data.fullPlayerList.forEach(fullName => {
                     const li = document.createElement('li');
                     const namedPlayer = data.namedPlayers.find(p => p.full_name === fullName);
@@ -317,25 +309,36 @@
 
                 document.getElementById('skip-pause-btn').textContent = 'Следующий раунд';
                 document.getElementById('skip-pause-btn').disabled = false;
-                
-                // Запускаем таймер
-                let countdown = 10; // Берем из константы сервера PAUSE_BETWEEN_ROUNDS
-                summaryCountdownDisplay.textContent = countdown;
-                if (summaryCountdownInterval) clearInterval(summaryCountdownInterval); // Очищаем старый, если есть
-                summaryCountdownInterval = setInterval(() => {
-                    countdown--;
-                    summaryCountdownDisplay.textContent = countdown;
-                    if (countdown <= 0) {
-                        clearInterval(summaryCountdownInterval);
-                        summaryCountdownInterval = null;
-                        // Можно добавить текст "Загрузка..."
-                    }
-                }, 1000);
-                
-                showScreen('summary');
-            });
 
-            // --- ИСПРАВЛЕНИЕ: ОСТАНАВЛИВАЕМ ТАЙМЕР ПРИ СКИПЕ (Request 5) ---
+                // --- СНАЧАЛА ПОКАЗЫВАЕМ ЭКРАН ---
+                showScreen('summary');
+
+                // --- ПОТОМ ЗАПУСКАЕМ ТАЙМЕР (ЧЕРЕЗ setTimeout) ---
+                setTimeout(() => {
+                    let countdown = 10; // PAUSE_BETWEEN_ROUNDS
+                    // Проверяем, что мы все еще на экране summary (мало ли, вдруг уже ушли)
+                    if (screens.summary.classList.contains('active')) { 
+                        summaryCountdownDisplay.textContent = countdown;
+                        summaryCountdownInterval = setInterval(() => {
+                            countdown--;
+                            // Обновляем только если все еще на экране
+                            if (screens.summary.classList.contains('active')) {
+                                summaryCountdownDisplay.textContent = countdown;
+                            }
+                            if (countdown <= 0) {
+                                clearInterval(summaryCountdownInterval);
+                                summaryCountdownInterval = null;
+                                if (screens.summary.classList.contains('active')) {
+                                     summaryCountdownDisplay.textContent = "0"; 
+                                }
+                            }
+                        }, 1000);
+                    }
+                }, 0); // Запускаем "сразу", но после отрисовки
+            });
+            // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
+
             document.getElementById('skip-pause-btn').addEventListener('click', () => {
                 if (summaryCountdownInterval) {
                     clearInterval(summaryCountdownInterval);
@@ -354,7 +357,7 @@
                 showScreen('game');
                 updateGameUI(state);
             });
-            
+
             function updateGameUI(state) {
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
 
@@ -365,17 +368,17 @@
                         localState.myPlayerIndex = parseInt(index); break;
                     }
                 }
-                
+
                 document.getElementById('round-info').textContent = `Раунд ${state.round}/${state.totalRounds}`;
                 document.getElementById('club-name-display').textContent = state.clubName;
-                
+
                 for (let i = 0; i < 2; i++) {
                     const playerInfoEl = document.getElementById(`player-${i}-info`);
                     if (state.players[i]) {
                         playerInfoEl.style.display = 'block';
                         playerInfoEl.querySelector('.nickname').textContent = state.players[i].nickname;
                         playerInfoEl.querySelector('.score').textContent = state.scores[i] || 0;
-                        
+
                         const timeBankEl = playerInfoEl.querySelector('.time-bank');
                         let timeLeft = state.timeBanks[i] || 0;
                         timeBankEl.textContent = `${timeLeft.toFixed(1)}с`;
@@ -396,7 +399,7 @@
                         playerInfoEl.style.display = 'none';
                     }
                 }
-                
+
                 const namedPlayersList = document.getElementById('named-players-list');
                 namedPlayersList.innerHTML = '';
                 state.namedPlayers.forEach(p => {
@@ -404,32 +407,28 @@
                     li.textContent = `${p.full_name} (${state.players[p.by].nickname})`;
                     namedPlayersList.appendChild(li);
                 });
-                
+
                 const myTurn = state.currentPlayerIndex === localState.myPlayerIndex;
                 const guessInput = document.getElementById('guess-input');
-                
-                guessInput.disabled = false; // Поле ввода ВСЕГДА активно (Request 1)
+
+                guessInput.disabled = false;
                 if (myTurn) {
                     guessInput.placeholder = "Введите фамилию игрока";
-                    if(document.activeElement !== guessInput) { // Не переводить фокус, если уже печатаем
-                       // guessInput.focus(); // Убрал авто-фокус, он может мешать
-                    }
                 } else {
                     guessInput.placeholder = "Ход соперника... (можно печатать)";
                 }
                 document.getElementById('submit-guess-btn').disabled = !myTurn;
                 document.getElementById('surrender-btn').disabled = !myTurn;
-                
+
                 document.getElementById('guess-result-msg').textContent = '';
             }
 
-            // --- НОВЫЙ ОБРАБОТЧИК GAME OVER (Request 2) ---
             function getEndReasonText(reason) {
                 if (reason === 'unreachable_score') return 'Игра завершена досрочно: счет недосягаемый.';
                 if (reason === 'normal') return 'Все раунды сыграны.';
-                return 'Игра окончена.'; // Фолбэк
+                return 'Игра окончена.';
             }
-            
+
             function getRoundOutcomeText(round, p1_nick, p2_nick) {
                 const winnerIndex = round.winner_index;
                 const reason = round.result_type;
@@ -437,28 +436,28 @@
 
                 if (reason === 'completed' || winnerIndex === 'draw') {
                     return 'Ничья (все названы)';
-                } else if (reason === 'surrender') {
-                    const winnerNick = (loserNick === p1_nick) ? p2_nick : p1_nick;
-                    return `Победил ${winnerNick} (соперник сдался)`;
-                } else if (reason === 'timeout') {
-                     const winnerNick = (loserNick === p1_nick) ? p2_nick : p1_nick;
-                    return `Победил ${winnerNick} (время вышло)`;
+                } else if (p1_nick && p2_nick) { // Только для PvP
+                    if (reason === 'surrender') {
+                        const winnerNick = (loserNick === p1_nick) ? p2_nick : p1_nick;
+                        return `Победил ${winnerNick} (соперник сдался)`;
+                    } else if (reason === 'timeout') {
+                        const winnerNick = (loserNick === p1_nick) ? p2_nick : p1_nick;
+                        return `Победил ${winnerNick} (время вышло)`;
+                    }
+                } else { // Для соло режима
+                     if (reason === 'surrender') return 'Сдался';
+                     if (reason === 'timeout') return 'Время вышло';
                 }
                 return 'н/д';
             }
 
             socket.on('game_over', (data) => {
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
-                 // Очищаем и таймер summary на всякий случай
-                if (summaryCountdownInterval) {
-                    clearInterval(summaryCountdownInterval);
-                    summaryCountdownInterval = null;
-                }
-                
+                if (summaryCountdownInterval) clearInterval(summaryCountdownInterval);
+
                 const p1_nick = data.players[0].nickname;
-                // Проверяем, есть ли второй игрок (для соло режима)
                 const p2_nick = data.players[1] ? data.players[1].nickname : null;
-                
+
                 document.getElementById('game-over-score').textContent = `Счет ${data.final_scores[0]} - ${data.final_scores[1] || 0}`;
                 document.getElementById('game-over-reason').textContent = getEndReasonText(data.end_reason);
 
@@ -466,29 +465,32 @@
                 if (data.mode === 'solo') {
                     ratingText = 'Рейтинг в тренировке не меняется.';
                 } else if (data.rating_changes) {
+                    // Проверяем наличие ключей (на случай ошибки сервера)
                     const p1 = data.rating_changes['0'];
                     const p2 = data.rating_changes['1'];
-                    const p1_diff = p1.new - p1.old;
-                    const p2_diff = p2.new - p2.old;
-                    
-                    ratingText = `
-                        <b>${p1.nickname}:</b> ${p1.new} (${p1_diff >= 0 ? '+' : ''}${p1_diff})<br>
-                        <b>${p2.nickname}:</b> ${p2.new} (${p2_diff >= 0 ? '+' : ''}${p2_diff})
-                    `;
+                    if (p1 && p2) {
+                        const p1_diff = p1.new - p1.old;
+                        const p2_diff = p2.new - p2.old;
+                        ratingText = `
+                            <b>${p1.nickname}:</b> ${p1.new} (${p1_diff >= 0 ? '+' : ''}${p1_diff})<br>
+                            <b>${p2.nickname}:</b> ${p2.new} (${p2_diff >= 0 ? '+' : ''}${p2_diff})
+                        `;
+                    } else {
+                         ratingText = 'Ошибка при загрузке изменения рейтинга.';
+                    }
                 } else {
-                     ratingText = 'Не удалось загрузить изменение рейтинга.';
+                     ratingText = 'Изменение рейтинга не пришло с сервера.';
                 }
                 document.getElementById('game-over-ratings').innerHTML = ratingText;
 
                 const historyTable = document.querySelector('#game-over-table tbody');
                 historyTable.innerHTML = '';
-                
+
                 if (data.history && data.history.length > 0) {
                     data.history.forEach((round, index) => {
                         const tr = document.createElement('tr');
-                        // В соло режиме нет ников для истории раунда
-                        const outcomeText = getRoundOutcomeText(round, p1_nick, p2_nick || 'Тренировка'); 
-                        
+                        const outcomeText = getRoundOutcomeText(round, p1_nick, p2_nick);
+
                         tr.innerHTML = `
                             <td>${index + 1}</td>
                             <td>${round.club_name}</td>
@@ -524,8 +526,9 @@
                 }
                 setTimeout(() => { msgEl.textContent = ''; }, 2000);
             });
-            
-            // --- КНОПКИ ЛОББИ И НАСТРОЕК ---
+
+            // --- Остальной JS без изменений ---
+            // ... (auth, settings, lobby, etc.) ...
             const nicknameInput = document.getElementById('nickname-input');
             const submitNicknameBtn = document.getElementById('submit-nickname-btn');
             submitNicknameBtn.addEventListener('click', () => {
@@ -543,17 +546,13 @@
                 settingsTitle.textContent = isTraining ? 'Настройки Тренировки' : 'Настройки PvP Игры';
                 confirmTrainingBtn.style.display = isTraining ? 'block' : 'none';
                 confirmCreateBtn.style.display = isTraining ? 'none' : 'block';
-                
                 tabButtons.forEach(btn => btn.classList.remove('active'));
                 tabContents.forEach(content => content.classList.remove('active'));
                 document.querySelector('.tab-btn[data-tab="random"]').classList.add('active');
                 document.getElementById('tab-random').classList.add('active');
-
                 socket.emit('get_league_clubs', { league: document.getElementById('league-select').value });
                 showScreen('settings');
             }
-
-            // --- ЛОГИКА ЭКРАНА НАСТРОЕК ---
             tabButtons.forEach(button => {
                 button.addEventListener('click', () => {
                     tabButtons.forEach(btn => btn.classList.remove('active'));
@@ -563,7 +562,6 @@
                     validateSettings();
                 });
             });
-
             socket.on('league_clubs_data', (data) => {
                 localState.maxClubsInLeague = data.clubs.length;
                 randomClubsSlider.max = localState.maxClubsInLeague;
@@ -577,102 +575,70 @@
                 });
                 validateSettings();
             });
-
             randomClubsSlider.addEventListener('input', () => {
                 randomClubsLabel.textContent = `Количество клубов: ${randomClubsSlider.value}`;
                 validateSettings();
             });
-
             clubsSelectionList.addEventListener('change', (e) => {
                 if (e.target.type === 'checkbox') validateSettings();
             });
-
             function validateSettings() {
                 const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
                 let isValid = false; let error = "";
                 if (activeTab === 'random') {
                     const count = parseInt(randomClubsSlider.value, 10);
-                    if (count < 3) error = "Нужно выбрать минимум 3 клуба.";
-                    else isValid = true;
+                    if (count < 3) error = "Нужно выбрать минимум 3 клуба."; else isValid = true;
                 } else if (activeTab === 'manual') {
                     const checkedCount = document.querySelectorAll('#clubs-selection-list input:checked').length;
                     manualClubsCount.textContent = `Выбрано: ${checkedCount}`;
-                    if (checkedCount < 3) error = `Нужно выбрать минимум 3 клуба (выбрано ${checkedCount}).`;
-                    else isValid = true;
+                    if (checkedCount < 3) error = `Нужно выбрать минимум 3 клуба (выбрано ${checkedCount}).`; else isValid = true;
                 }
                 settingsErrorMsg.textContent = error;
                 confirmCreateBtn.disabled = !isValid;
                 confirmTrainingBtn.disabled = !isValid;
             }
-
             function handleCreateGame(isTraining) {
                 const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
-                let settings = {
-                    league: document.getElementById('league-select').value,
-                    time_bank: parseFloat(document.getElementById('time-bank-input').value),
-                    num_rounds: 0, selected_clubs: []
-                };
+                let settings = { league: document.getElementById('league-select').value, time_bank: parseFloat(document.getElementById('time-bank-input').value), num_rounds: 0, selected_clubs: [] };
                 if (activeTab === 'random') settings.num_rounds = parseInt(randomClubsSlider.value, 10);
                 else if (activeTab === 'manual') settings.selected_clubs = Array.from(document.querySelectorAll('#clubs-selection-list input:checked')).map(cb => cb.value);
-                
                 if (isTraining) socket.emit('start_game', { mode: 'solo', nickname: localState.nickname, settings: settings });
                 else { socket.emit('create_game', { nickname: localState.nickname, settings: settings }); showScreen('lobby'); }
             }
-
             confirmCreateBtn.addEventListener('click', () => handleCreateGame(false));
             confirmTrainingBtn.addEventListener('click', () => handleCreateGame(true));
-            
-            // --- ЛОГИКА ЛОББИ ---
             openGamesList.addEventListener('click', (e) => {
                 if (e.target.classList.contains('join-btn')) socket.emit('join_game', { creator_sid: e.target.getAttribute('data-creator-sid'), nickname: localState.nickname });
                 if (e.target.classList.contains('cancel-btn')) socket.emit('cancel_game');
             });
-
             socket.on('update_lobby', (games) => {
                 openGamesList.innerHTML = games.length === 0 ? '<p>Нет доступных игр.</p>' : '';
                 games.forEach(game => {
                     let clubsText = ''; const settings = game.settings;
                     if (settings.selected_clubs && settings.selected_clubs.length > 0) clubsText = `Клубы: ${settings.selected_clubs.join(', ')}`;
-                    else if (settings.num_rounds && settings.num_rounds > 0) clubsText = `Случайные клубы: ${settings.num_rounds} шт.`;
-                    else clubsText = 'Все клубы лиги'; 
-                    let buttonHtml = (game.creator_sid === socket.id) 
-                        ? `<button class="cancel-btn" data-creator-sid="${game.creator_sid}">Отменить</button>`
-                        : `<button class="join-btn" data-creator-sid="${game.creator_sid}">Войти</button>`;
+                    else if (settings.num_rounds && settings.num_rounds > 0) clubsText = `Случайные клубы: ${settings.num_rounds} шт.`; else clubsText = 'Все клубы лиги';
+                    let buttonHtml = (game.creator_sid === socket.id) ? `<button class="cancel-btn" data-creator-sid="${game.creator_sid}">Отменить</button>` : `<button class="join-btn" data-creator-sid="${game.creator_sid}">Войти</button>`;
                     openGamesList.innerHTML += `<div class="game-card"><div class="game-card-info"><p><strong>${game.creator_nickname}</strong> (${game.creator_rating})</p><p style="font-size:12px;">${clubsText}</p></div>${buttonHtml}</div>`;
                 });
             });
-            
             socket.on('lobby_stats_update', (stats) => {
                 document.getElementById('lobby-stats').textContent = `В лобби: ${stats.players_in_lobby} | В игре: ${stats.players_in_game}`;
             });
-
             const submitGuessBtn = document.getElementById('submit-guess-btn');
             const guessInput = document.getElementById('guess-input');
             submitGuessBtn.addEventListener('click', () => {
-                if(guessInput.value.trim() !== '') {
-                    socket.emit('submit_guess', { roomId: localState.currentRoomId, guess: guessInput.value });
-                    guessInput.value = '';
-                }
+                if(guessInput.value.trim() !== '') { socket.emit('submit_guess', { roomId: localState.currentRoomId, guess: guessInput.value }); guessInput.value = ''; }
             });
             guessInput.addEventListener('keyup', (e) => e.key === 'Enter' && submitGuessBtn.click());
-            
-            document.getElementById('show-leaderboard-btn').addEventListener('click', () => {
-                socket.emit('get_leaderboard');
-                showScreen('leaderboard');
-            });
+            document.getElementById('show-leaderboard-btn').addEventListener('click', () => { socket.emit('get_leaderboard'); showScreen('leaderboard'); });
             document.getElementById('leaderboard-back-btn').addEventListener('click', () => showScreen('lobby'));
-
             socket.on('leaderboard_data', (data) => {
                 const tableBody = document.querySelector('#leaderboard-table tbody');
                 tableBody.innerHTML = '';
-                data.forEach((user, index) => {
-                    tableBody.innerHTML += `<tr><td>${index + 1}</td><td>${user.nickname}</td><td>${user.rating}</td><td>${user.games_played}</td></tr>`;
-                });
+                data.forEach((user, index) => { tableBody.innerHTML += `<tr><td>${index + 1}</td><td>${user.nickname}</td><td>${user.rating}</td><td>${user.games_played}</td></tr>`; });
             });
-            
             socket.on('opponent_disconnected', (data) => {
                 alert(data.message || 'Соперник отключился.');
-                // Очищаем таймеры на всякий случай
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
                 if (summaryCountdownInterval) clearInterval(summaryCountdownInterval);
                 showScreen('lobby');
