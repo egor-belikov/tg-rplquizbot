@@ -1,9 +1,11 @@
-Flask
-Flask-SocketIO
-Flask-SQLAlchemy
+# requirements.txt
+flask
+flask_socketio
+flask_sqlalchemy
 glicko2
 fuzzywuzzy
-python-levenshtein
+python-Levenshtein
 eventlet
 gunicorn
 psycopg2-binary
+aiogram==3.10.0  # <-- ДОБАВЬ ЭТУ СТРОКУ
