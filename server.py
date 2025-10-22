@@ -121,46 +121,47 @@ def load_league_data(filename, league_name):
 all_leagues_data = {}
 all_leagues_data.update(load_league_data('players.csv', 'РПЛ'))
 
-# --- ИСПРАВЛЕНИЕ: Функция теперь ВОЗВРАЩАЕТ новые рейтинги ---
+# --- ИСПРАВЛЕНИЕ: Функция больше не управляет сессией (контекстом/коммитом) ---
 def update_ratings(p1_user_obj, p2_user_obj, p1_outcome):
     """
-    Обновляет Glicko-2 рейтинги, сохраняет в БД и ВОЗВРАЩАЕТ новые значения.
+    Обновляет Glicko-2 рейтинги, МОДИФИЦИРУЕТ ОБЪЕКТЫ и ВОЗВРАЩАЕТ новые значения.
     p1_outcome: 1.0 (p1 победил), 0.0 (p1 проиграл), 0.5 (ничья)
     Возвращает: tuple (p1_new_rating, p2_new_rating) или None в случае ошибки.
+    !!! ВНИМАНИЕ: Эта функция НЕ коммитит изменения. Вызывающая функция
+    !!! должна сама управлять сессией и вызывать db.session.commit().
     """
     try:
-        with app.app_context():
-            p1 = Player(rating=p1_user_obj.rating, rd=p1_user_obj.rd, vol=p1_user_obj.vol)
-            p2 = Player(rating=p2_user_obj.rating, rd=p2_user_obj.rd, vol=p2_user_obj.vol)
+        # КОНТЕКСТ УБРАН
+        p1 = Player(rating=p1_user_obj.rating, rd=p1_user_obj.rd, vol=p1_user_obj.vol)
+        p2 = Player(rating=p2_user_obj.rating, rd=p2_user_obj.rd, vol=p2_user_obj.vol)
 
-            p2_outcome = 1.0 - p1_outcome
+        p2_outcome = 1.0 - p1_outcome
 
-            p1_old_rating_for_calc = p1.rating
-            p2_old_rating_for_calc = p2.rating
-            p1_old_rd_for_calc = p1.rd
-            p2_old_rd_for_calc = p2.rd
+        p1_old_rating_for_calc = p1.rating
+        p2_old_rating_for_calc = p2.rating
+        p1_old_rd_for_calc = p1.rd
+        p2_old_rd_for_calc = p2.rd
 
-            p1.update_player([p2_old_rating_for_calc], [p2_old_rd_for_calc], [p1_outcome])
-            p2.update_player([p1_old_rating_for_calc], [p1_old_rd_for_calc], [p2_outcome])
+        p1.update_player([p2_old_rating_for_calc], [p2_old_rd_for_calc], [p1_outcome])
+        p2.update_player([p1_old_rating_for_calc], [p1_old_rd_for_calc], [p2_outcome])
 
-            # Обновляем данные в объектах SQLAlchemy
-            p1_user_obj.rating = p1.rating
-            p1_user_obj.rd = p1.rd
-            p1_user_obj.vol = p1.vol
+        # Обновляем данные в объектах SQLAlchemy (они из сессии)
+        p1_user_obj.rating = p1.rating
+        p1_user_obj.rd = p1.rd
+        p1_user_obj.vol = p1.vol
 
-            p2_user_obj.rating = p2.rating
-            p2_user_obj.rd = p2.rd
-            p2_user_obj.vol = p2.vol
+        p2_user_obj.rating = p2.rating
+        p2_user_obj.rd = p2.rd
+        p2_user_obj.vol = p2.vol
 
-            # Коммитим изменения в базу
-            db.session.commit()
-            print(f"[RATING] Рейтинги обновлены. {p1_user_obj.nickname} ({p1_outcome}) -> {int(p1.rating)} vs {p2_user_obj.nickname} ({p2_outcome}) -> {int(p2.rating)}")
-            # Возвращаем новые целочисленные рейтинги
-            return int(p1.rating), int(p2.rating)
+        # КОММИТ УБРАН
+        print(f"[RATING] Рейтинги обновлены (в объектах). {p1_user_obj.nickname} ({p1_outcome}) -> {int(p1.rating)} vs {p2_user_obj.nickname} ({p2_outcome}) -> {int(p2.rating)}")
+        # Возвращаем новые целочисленные рейтинги
+        return int(p1.rating), int(p2.rating)
 
     except Exception as e:
-        db.session.rollback()
-        print(f"[ERROR] Ошибка при обновлении/сохранении рейтингов: {e}")
+        # РОЛЛБЭК УБРАН
+        print(f"[ERROR] Ошибка при расчете Glicko: {e}")
         return None
 # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
@@ -366,7 +367,7 @@ def on_timer_end(room_id):
     print(f"[ROUND_END] {room_id}: Раунд завершен из-за '{game_session['last_round_end_reason']}' игрока {game.players[loser_index]['nickname']}.")
     show_round_summary_and_schedule_next(room_id)
 
-# --- ИСПРАВЛЕНИЕ: Используем возвращенные значения update_ratings и ДОБАВЛЯЕМ ЛОГИРОВАНИЕ ---
+# --- ИСПРАВЛЕНИЕ: Управление сессией вынесено сюда, update_ratings больше не коммитит ---
 def start_game_loop(room_id):
     """Основной цикл игры: запускает новый раунд или завершает игру."""
     game_session = active_games.get(room_id)
@@ -391,86 +392,85 @@ def start_game_loop(room_id):
             if player_info.get('sid') and player_info['sid'] != 'BOT' and socketio.server.manager.is_connected(player_info['sid'], '/'):
                  add_player_to_lobby(player_info['sid'])
 
+        # --- ИСПРАВЛЕНИЕ: Единый блок try/except/with app_context для коммита ---
         if game.mode == 'pvp' and len(game.players) > 1:
-            print(f"[RATING_CALC] {room_id}: Начало подсчета рейтинга для PvP.") # <-- НОВЫЙ ЛОГ
-            p1_id, p2_id = None, None
-            p1_old_rating, p2_old_rating = 1500, 1500
-            p1_new_rating, p2_new_rating = None, None # Инициализируем новые рейтинги
+            print(f"[RATING_CALC] {room_id}: Начало подсчета рейтинга для PvP.")
+            p1_nick = game.players[0]['nickname']
+            p2_nick = game.players[1]['nickname']
+            p1_new_rating, p2_new_rating = None, None
+            p1_old_rating, p2_old_rating = 1500, 1500 # Значения по умолчанию
 
-            # 1. Получаем ID и старые рейтинги
-            with app.app_context():
-                p1_nick = game.players[0]['nickname'] # <-- НОВЫЙ
-                p2_nick = game.players[1]['nickname'] # <-- НОВЫЙ
-                print(f"[RATING_CALC] {room_id}: Запрос игроков из БД: {p1_nick}, {p2_nick}") # <-- НОВЫЙ ЛОГ
-                p1_obj_query = User.query.filter_by(nickname=p1_nick).first()
-                p2_obj_query = User.query.filter_by(nickname=p2_nick).first()
+            with app.app_context(): # <-- ОДИН КОНТЕКСТ
+                try:
+                    p1_user = User.query.filter_by(nickname=p1_nick).first()
+                    p2_user = User.query.filter_by(nickname=p2_nick).first()
 
-                if p1_obj_query and p2_obj_query:
-                    p1_id, p2_id = p1_obj_query.id, p2_obj_query.id
-                    p1_old_rating, p2_old_rating = int(p1_obj_query.rating), int(p2_obj_query.rating)
-                    print(f"[RATING_CALC] {room_id}: Старые рейтинги: {p1_nick}({p1_old_rating}), {p2_nick}({p2_old_rating})") # <-- ИЗМЕНЕННЫЙ ЛОГ
-                else:
-                    print(f"[ERROR][RATING_CALC] {room_id}: Не удалось найти одного из игроков ({p1_nick}, {p2_nick}) в БД перед обновлением.") # <-- ИЗМЕНЕННЫЙ ЛОГ
+                    if p1_user and p2_user:
+                        p1_old_rating = int(p1_user.rating)
+                        p2_old_rating = int(p2_user.rating)
+                        print(f"[RATING_CALC] {room_id}: Старые рейтинги: {p1_nick}({p1_old_rating}), {p2_nick}({p2_old_rating})")
 
-            # 2. Если нашли обоих, обновляем счетчики и рейтинги
-            if p1_id and p2_id:
-                # Обновляем счетчик игр
-                with app.app_context():
-                    p1_to_update = db.session.get(User, p1_id)
-                    p2_to_update = db.session.get(User, p2_id)
-                    if p1_to_update and p2_to_update:
-                        p1_to_update.games_played += 1
-                        p2_to_update.games_played += 1
-                        db.session.commit()
-                        print(f"[STATS] {room_id}: Игрокам {p1_to_update.nickname} и {p2_to_update.nickname} засчитана игра.")
-                    else: print(f"[ERROR] {room_id}: Не удалось перезапросить игроков для обновления счетчика игр.")
+                        # 1. Обновляем счетчик игр
+                        p1_user.games_played += 1
+                        p2_user.games_played += 1
+                        print(f"[STATS] {room_id}: Игрокам {p1_user.nickname} и {p2_user.nickname} засчитана игра.")
 
-                # Определяем исход для P1
-                outcome = 0.5
-                if game.scores[0] > game.scores[1]: outcome = 1.0
-                elif game.scores[1] > game.scores[0]: outcome = 0.0
-                print(f"[RATING_CALC] {room_id}: Исход для P1 ({p1_nick}): {outcome}") # <-- НОВЫЙ ЛОГ
+                        # 2. Определяем исход
+                        outcome = 0.5
+                        if game.scores[0] > game.scores[1]: outcome = 1.0
+                        elif game.scores[1] > game.scores[0]: outcome = 0.0
+                        print(f"[RATING_CALC] {room_id}: Исход для P1 ({p1_nick}): {outcome}")
 
-                # Обновляем рейтинги и ПОЛУЧАЕМ новые значения
-                with app.app_context():
-                    p1_for_rating = db.session.get(User, p1_id)
-                    p2_for_rating = db.session.get(User, p2_id)
-                    if p1_for_rating and p2_for_rating:
-                        # Сохраняем результат вызова update_ratings
-                        new_ratings_tuple = update_ratings(p1_user_obj=p1_for_rating, p2_user_obj=p2_for_rating, p1_outcome=outcome)
+                        # 3. Обновляем рейтинги (БЕЗ КОНТЕКСТА ВНУТРИ)
+                        new_ratings_tuple = update_ratings(p1_user_obj=p1_user, p2_user_obj=p2_user, p1_outcome=outcome)
+
                         if new_ratings_tuple:
-                            p1_new_rating, p2_new_rating = new_ratings_tuple # Присваиваем возвращенные значения
-                            print(f"[RATING_CALC] {room_id}: Новые рейтинги ПОЛУЧЕНЫ: {p1_nick}({p1_new_rating}), {p2_nick}({p2_new_rating})") # <-- ИЗМЕНЕННЫЙ ЛОГ
+                            p1_new_rating, p2_new_rating = new_ratings_tuple
+                            print(f"[RATING_CALC] {room_id}: Новые рейтинги ПОЛУЧЕНЫ: {p1_nick}({p1_new_rating}), {p2_nick}({p2_new_rating})")
                         else:
-                             print(f"[ERROR][RATING_CALC] {room_id}: Функция update_ratings не вернула новые рейтинги.") # <-- ИЗМЕНЕННЫЙ ЛОГ
-                             p1_new_rating, p2_new_rating = p1_old_rating, p2_old_rating # Используем старые в случае ошибки
-                    else:
-                        print(f"[ERROR] {room_id}: Не удалось перезапросить игроков для обновления рейтинга.")
-                        p1_new_rating, p2_new_rating = p1_old_rating, p2_old_rating # Используем старые
+                            print(f"[ERROR][RATING_CALC] {room_id}: Функция update_ratings не вернула новые рейтинги.")
+                            p1_new_rating, p2_new_rating = p1_old_rating, p2_old_rating # Fallback
 
-                # 3. Формируем данные для клиента, ИСПОЛЬЗУЯ p1_new_rating и p2_new_rating
-                game_over_data['rating_changes'] = {
-                    '0': {'nickname': game.players[0]['nickname'], 'old': p1_old_rating, 'new': p1_new_rating if p1_new_rating is not None else p1_old_rating},
-                    '1': {'nickname': game.players[1]['nickname'], 'old': p2_old_rating, 'new': p2_new_rating if p2_new_rating is not None else p2_old_rating}
-                }
-                print(f"[RATING_CALC] {room_id}: Данные об изменении рейтинга отправлены клиенту.") # <-- НОВЫЙ ЛОГ
-                socketio.emit('leaderboard_data', get_leaderboard_data())
-            else:
-                 print(f"[RATING_CALC] {room_id}: Рейтинги НЕ обновлены из-за отсутствия одного из игроков в БД.") # <-- ИЗМЕНЕННЫЙ ЛОГ
+                        # 4. Коммитим ВСЕ
+                        db.session.commit() # <-- ОДИН КОММИТ
+                        print(f"[RATING_CALC] {room_id}: Все изменения (игры и рейтинги) сохранены в БД.")
+
+                        # 5. Формируем данные
+                        game_over_data['rating_changes'] = {
+                            '0': {'nickname': p1_nick, 'old': p1_old_rating, 'new': p1_new_rating},
+                            '1': {'nickname': p2_nick, 'old': p2_old_rating, 'new': p2_new_rating}
+                        }
+                        socketio.emit('leaderboard_data', get_leaderboard_data()) # Отправляем свежие данные
+
+                    else:
+                        print(f"[ERROR][RATING_CALC] {room_id}: Не удалось найти одного из игроков ({p1_nick}, {p2_nick}) в БД.")
+                        game_over_data['rating_changes'] = {
+                            '0': {'nickname': p1_nick, 'old': p1_old_rating, 'new': p1_old_rating},
+                            '1': {'nickname': p2_nick, 'old': p2_old_rating, 'new': p2_old_rating}
+                        }
+
+                except Exception as e:
+                    db.session.rollback()
+                    print(f"[ERROR][RATING_CALC] {room_id}: Ошибка в транзакции обновления рейтинга: {e}")
+                    # Убедимся, что у клиента не будет ошибки
+                    game_over_data['rating_changes'] = {
+                        '0': {'nickname': p1_nick, 'old': p1_old_rating, 'new': p1_old_rating},
+                        '1': {'nickname': p2_nick, 'old': p2_old_rating, 'new': p2_old_rating}
+                    }
 
         else:
-             print(f"[GAME_OVER] {room_id}: Рейтинги не подсчитывались (Режим: {game.mode}, Игроков: {len(game.players)}).") # <-- НОВЫЙ ЛОГ
+             print(f"[GAME_OVER] {room_id}: Рейтинги не подсчитывались (Режим: {game.mode}, Игроков: {len(game.players)}).")
 
         if room_id in active_games: del active_games[room_id]
         broadcast_lobby_stats()
         socketio.emit('game_over', game_over_data, room=room_id)
         return
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     # --- ИГРА ПРОДОЛЖАЕТСЯ ---
     print(f"[ROUND_START] {room_id}: Начинается раунд {game.current_round + 1}/{game.num_rounds}. Клуб: {game.current_club_name}.")
     socketio.emit('round_started', get_game_state_for_client(game, room_id), room=room_id)
     start_next_human_turn(room_id)
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 
 def show_round_summary_and_schedule_next(room_id):
@@ -537,7 +537,7 @@ def handle_connect():
     print(f"[CONNECTION] Клиент подключился: {sid}")
     emit('auth_request')
 
-# --- ИСПРАВЛЕНИЕ: Добавлено логирование в handle_disconnect ---
+# --- ИСПРАВЛЕНИЕ: Убрано обновление статистики при дисконнекте ---
 @socketio.on('disconnect')
 def handle_disconnect():
     sid = request.sid
@@ -572,48 +572,19 @@ def handle_disconnect():
         print(f"[DISCONNECT] Игрок {sid} ({disconnected_player_nick}) отключился от игры {game_to_terminate_id}. Игра прекращена.")
 
         if game.mode == 'pvp' and opponent_sid:
-            print(f"[RATING_CALC_DC] {game_to_terminate_id}: Начало подсчета рейтинга (Тех. поражение).") # <-- НОВЫЙ ЛОГ
-            winner_index = 1 - disconnected_player_index
-            loser_index = disconnected_player_index
-            p1_for_rating, p2_for_rating = None, None
-            winner_id, loser_id = None, None
-
-            winner_nick = game.players[winner_index]['nickname'] # <-- НОВЫЙ
-            loser_nick = game.players[loser_index]['nickname'] # <-- НОВЫЙ
-            print(f"[RATING_CALC_DC] {game_to_terminate_id}: Победитель: {winner_nick} (idx: {winner_index}), Проигравший: {loser_nick} (idx: {loser_index})") # <-- НОВЫЙ ЛОГ
-
-            with app.app_context():
-                winner_obj = User.query.filter_by(nickname=winner_nick).first()
-                loser_obj = User.query.filter_by(nickname=loser_nick).first()
-                if winner_obj and loser_obj:
-                    winner_id, loser_id = winner_obj.id, loser_obj.id
-                    winner_obj.games_played += 1
-                    loser_obj.games_played += 1
-                    db.session.commit()
-                    print(f"[STATS][RATING_CALC_DC] {game_to_terminate_id}: Засчитана игра из-за дисконнекта.") # <-- ИЗМЕНЕННЫЙ ЛОГ
-
-                    p1_for_rating = winner_obj if winner_index == 0 else loser_obj
-                    p2_for_rating = loser_obj if winner_index == 0 else winner_obj
-
-                    # Исход для P1 (p1_for_rating)
-                    p1_outcome = 1.0 if winner_index == 0 else 0.0
-                    print(f"[RATING_CALC_DC] {game_to_terminate_id}: P1 (idx 0) - {p1_for_rating.nickname}, P2 (idx 1) - {p2_for_rating.nickname}. Исход для P1: {p1_outcome}") # <-- НОВЫЙ ЛОГ
-
-                    # update_ratings уже логирует результат внутри себя
-                    update_ratings(p1_user_obj=p1_for_rating, p2_user_obj=p2_for_rating, p1_outcome=p1_outcome)
-                    socketio.emit('leaderboard_data', get_leaderboard_data())
-                else:
-                    print(f"[ERROR][RATING_CALC_DC] {game_to_terminate_id}: Не удалось найти игроков ({winner_nick}, {loser_nick}) для тех. поражения.") # <-- ИЗМЕНЕННЫЙ ЛОГ
+            # --- ИСПРАВЛЕНИЕ: По новой логике, НЕ обновляем рейтинг и игры при дисконнекте ---
+            print(f"[RATING_CALC_DC] {game_to_terminate_id}: Игра отменена из-за дисконнекта. Статистика и рейтинг НЕ обновляются.")
 
             if opponent_sid in socketio.server.manager.connected_sids.get('/', set()): # Проверяем, онлайн ли оппонент
                 add_player_to_lobby(opponent_sid)
-                emit('opponent_disconnected', {'message': f'Соперник ({disconnected_player_nick}) отключился. Вам засчитана победа.'}, room=opponent_sid)
-                print(f"[GAME] {game_to_terminate_id}: Отправлено уведомление о победе {opponent_sid}.")
+                emit('opponent_disconnected', {'message': f'Соперник ({disconnected_player_nick}) отключился. Игра отменена, статистика не засчитана.'}, room=opponent_sid)
+                print(f"[GAME] {game_to_terminate_id}: Отправлено уведомление об отмене игры {opponent_sid}.")
             else:
                  print(f"[GAME] {game_to_terminate_id}: Оставшийся игрок {opponent_sid} тоже отключился.")
+            # --- БЛОК С ОБНОВЛЕНИЕМ РЕЙТИНГА ПОЛНОСТЬЮ УДАЛЕН ---
 
         else:
-             print(f"[DISCONNECT] {game_to_terminate_id}: Игра была не PvP или не было оппонента, рейтинг не обновлен.") # <-- НОВЫЙ ЛОГ
+             print(f"[DISCONNECT] {game_to_terminate_id}: Игра была не PvP или не было оппонента, рейтинг не обновлен.")
 
         if game_to_terminate_id in active_games: del active_games[game_to_terminate_id]
         broadcast_lobby_stats()
