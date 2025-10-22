@@ -264,20 +264,29 @@ def start_game_loop(r_id):
                     if p1_upd and p2_upd: p1_upd.games_played += 1; p2_upd.games_played += 1; db.session.commit(); print(f"[STATS] {r_id}: Игрокам {p1_upd.nickname}, {p2_upd.nickname} засчитана игра.")
                     else: print(f"[ERROR] {r_id}: Не удалось обновить счетчик игр.")
                 
-                # --- НАЧАЛО ИСПРАВЛЕНИЯ SYNTAXERROR ---
                 outcome = 0.5
                 if game.scores[0] > game.scores[1]: 
                     outcome = 1.0
                 elif game.scores[1] > game.scores[0]: 
                     outcome = 0.0
-                # --- КОНЕЦ ИСПРАВЛЕНИЯ SYNTAXERROR ---
 
                 with app.app_context():
-                    p1_r = db.session.get(User, p1_id); p2_r = db.session.get(User, p2_id)
-                    if p1_r and p2_r: ratings_tuple = update_ratings(p1_user_obj=p1_r, p2_user_obj=p2_r, p1_outcome=outcome)
-                    if ratings_tuple: p1_new_r, p2_new_r = ratings_tuple; print(f"[RATING_FETCH] {r_id}: Новые ПОЛУЧЕНЫ: {p1_new_r}, {p2_new_r}")
-                    else: print(f"[ERROR] {r_id}: update_ratings не вернула рейтинги."); p1_new_r, p2_new_r = p1_old_r, p2_old_r
-                    else: print(f"[ERROR] {r_id}: Не удалось перезапросить для обновления рейтинга."); p1_new_r, p2_new_r = p1_old_r, p2_old_r
+                    # --- НАЧАЛО ИСПРАВЛЕНИЯ (ОШИБКА 1: IF/ELSE ЛОГИКА) ---
+                    p1_r = db.session.get(User, p1_id)
+                    p2_r = db.session.get(User, p2_id)
+                    if p1_r and p2_r: 
+                        ratings_tuple = update_ratings(p1_user_obj=p1_r, p2_user_obj=p2_r, p1_outcome=outcome)
+                        if ratings_tuple: 
+                            p1_new_r, p2_new_r = ratings_tuple
+                            print(f"[RATING_FETCH] {r_id}: Новые ПОЛУЧЕНЫ: {p1_new_r}, {p2_new_r}")
+                        else: 
+                            print(f"[ERROR] {r_id}: update_ratings не вернула рейтинги.")
+                            p1_new_r, p2_new_r = p1_old_r, p2_old_r
+                    else: 
+                        print(f"[ERROR] {r_id}: Не удалось перезапросить для обновления рейтинга.")
+                        p1_new_r, p2_new_r = p1_old_r, p2_old_r
+                    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
                 go_data['rating_changes'] = { '0': {'nickname': game.players[0]['nickname'], 'old': p1_old_r, 'new': p1_new_r if p1_new_r is not None else p1_old_r}, '1': {'nickname': game.players[1]['nickname'], 'old': p2_old_r, 'new': p2_new_r if p2_new_r is not None else p2_old_r} }; socketio.emit('leaderboard_data', get_leaderboard_data())
             else: print(f"[ERROR] {r_id}: Рейтинги НЕ обновлены.")
         if r_id in active_games: del active_games[r_id]; broadcast_lobby_stats(); socketio.emit('game_over', go_data, room=r_id); return
@@ -411,22 +420,70 @@ def handle_start_game(data):
     sid, mode, nick, settings = request.sid, data.get('mode'), data.get('nickname'), data.get('settings')
     if not nick: print(f"[ERROR] Start game no nickname {sid}"); return;
     if is_player_busy(sid): print(f"[SECURITY] {nick} ({sid}) busy, start rejected."); return
-    if mode == 'solo': p1_info = {'sid': sid, 'nickname': nick}; r_id = str(uuid.uuid4()); join_room(r_id)
-    try: game = GameState(p1_info, all_leagues_data, mode='solo', settings=settings)
-    if game.num_rounds == 0: print(f"[ERROR] {nick} ({sid}) solo no clubs."); leave_room(r_id); add_player_to_lobby(sid); emit('start_game_fail', {'message': 'Нет клубов.'}); return
-    active_games[r_id] = {'game': game, 'turn_id': None, 'pause_id': None, 'skip_votes': set(), 'last_round_end_reason': None}; remove_player_from_lobby(sid); broadcast_lobby_stats(); print(f"[GAME] {nick} started solo. Room: {r_id}. Rounds: {game.num_rounds}"); start_game_loop(r_id)
-    except Exception as e: print(f"[ERROR] Solo creation failed {nick}: {e}"); leave_room(r_id);
-    if r_id in active_games: del active_games[r_id]; add_player_to_lobby(sid); emit('start_game_fail', {'message': 'Ошибка сервера.'})
+    
+    r_id = None # Определяем r_id до блока try
+    p1_info = None
+    
+    if mode == 'solo': 
+        p1_info = {'sid': sid, 'nickname': nick}
+        r_id = str(uuid.uuid4())
+        join_room(r_id)
+    else:
+        emit('start_game_fail', {'message': 'Неизвестный режим.'})
+        return
+
+    # --- НАЧАЛО ИСПРАВЛЕНИЯ (ОШИБКА 2: TRY/EXCEPT) ---
+    try: 
+        game = GameState(p1_info, all_leagues_data, mode='solo', settings=settings)
+        
+        if game.num_rounds == 0: 
+            print(f"[ERROR] {nick} ({sid}) solo no clubs.")
+            leave_room(r_id)
+            add_player_to_lobby(sid)
+            emit('start_game_fail', {'message': 'Нет клубов.'})
+            return
+        
+        active_games[r_id] = {'game': game, 'turn_id': None, 'pause_id': None, 'skip_votes': set(), 'last_round_end_reason': None}
+        remove_player_from_lobby(sid)
+        broadcast_lobby_stats()
+        print(f"[GAME] {nick} started solo. Room: {r_id}. Rounds: {game.num_rounds}")
+        start_game_loop(r_id)
+    
+    except Exception as e: 
+        print(f"[ERROR] Solo creation failed {nick}: {e}")
+        if r_id: # Проверяем, что r_id был создан
+            leave_room(r_id, sid=sid)
+            if r_id in active_games: 
+                del active_games[r_id]
+        add_player_to_lobby(sid) # Возвращаем игрока в лобби при ошибке
+        emit('start_game_fail', {'message': 'Ошибка сервера.'})
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 @socketio.on('create_game')
 def handle_create_game(data):
     sid, nick, settings = request.sid, data.get('nickname'), data.get('settings')
     if not nick: print(f"[ERROR] Create game no nickname {sid}"); return;
     if is_player_busy(sid): print(f"[SECURITY] {nick} ({sid}) busy, create rejected."); return
-    try: temp_game = GameState({'nickname': nick}, all_leagues_data, mode='pvp', settings=settings)
-    except Exception as e: print(f"[ERROR] Settings validation failed {nick}: {e}"); emit('create_game_fail', {'message': 'Ошибка настроек.'}); return
-    if temp_game.num_rounds < 3: print(f"[ERROR] {nick} ({sid}) game < 3 clubs."); emit('create_game_fail', {'message': 'Мин. 3 клуба.'}); return
-    r_id = str(uuid.uuid4()); join_room(r_id); open_games[r_id] = {'creator': {'sid': sid, 'nickname': nick}, 'settings': settings}; remove_player_from_lobby(sid); print(f"[LOBBY] {nick} ({sid}) created {r_id}. R:{temp_game.num_rounds}, TB:{settings.get('time_bank', 90)}"); socketio.emit('update_lobby', get_lobby_data_list())
+    
+    # --- НАЧАЛО ИСПРАВЛЕНИЯ (ОШИБКА 2: TRY/EXCEPT) ---
+    try: 
+        temp_game = GameState({'nickname': nick}, all_leagues_data, mode='pvp', settings=settings)
+        if temp_game.num_rounds < 3: 
+            print(f"[ERROR] {nick} ({sid}) game < 3 clubs.")
+            emit('create_game_fail', {'message': 'Мин. 3 клуба.'})
+            return
+            
+        r_id = str(uuid.uuid4())
+        join_room(r_id)
+        open_games[r_id] = {'creator': {'sid': sid, 'nickname': nick}, 'settings': settings}
+        remove_player_from_lobby(sid)
+        print(f"[LOBBY] {nick} ({sid}) created {r_id}. R:{temp_game.num_rounds}, TB:{settings.get('time_bank', 90)}")
+        socketio.emit('update_lobby', get_lobby_data_list())
+
+    except Exception as e: 
+        print(f"[ERROR] Settings validation failed {nick}: {e}")
+        emit('create_game_fail', {'message': 'Ошибка настроек.'})
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 @socketio.on('cancel_game')
 def handle_cancel_game():
@@ -438,22 +495,52 @@ def handle_join_game(data):
     j_sid, j_nick, c_sid = request.sid, data.get('nickname'), data.get('creator_sid')
     if not j_nick or not c_sid: print(f"[ERROR] Invalid join: {data} from {j_sid}"); return
     if is_player_busy(j_sid): print(f"[SECURITY] {j_nick} ({j_sid}) busy, join rejected."); return
+    
     r_id = next((rid for rid, g in open_games.items() if g['creator']['sid'] == c_sid), None)
     if not r_id: print(f"[LOBBY] {j_nick} failed join {c_sid}. Not found."); emit('join_game_fail', {'message': 'Игра не найдена.'}); return
-    g_join = open_games.pop(r_id); socketio.emit('update_lobby', get_lobby_data_list()); c_info = g_join['creator']
-    if c_info['sid'] == j_sid: print(f"[SECURITY] {j_nick} joined own game {r_id}."); open_games[r_id] = g_join; socketio.emit('update_lobby', get_lobby_data_list()); return
+    
+    g_join = open_games.pop(r_id)
+    socketio.emit('update_lobby', get_lobby_data_list())
+    c_info = g_join['creator']
+    
+    if c_info['sid'] == j_sid: 
+        print(f"[SECURITY] {j_nick} joined own game {r_id}.")
+        open_games[r_id] = g_join # Вернуть игру обратно, т.к. вышли
+        socketio.emit('update_lobby', get_lobby_data_list())
+        return
+        
     p1, p2 = {'sid': c_info['sid'], 'nickname': c_info['nickname']}, {'sid': j_sid, 'nickname': j_nick}
-    join_room(r_id, sid=p2['sid']); remove_player_from_lobby(p2['sid'])
-    try: game = GameState(p1, all_leagues_data, p2, 'pvp', g_join['settings']); active_games[r_id] = {'game': game, 'turn_id': None, 'pause_id': None, 'skip_votes': set(), 'last_round_end_reason': None}; broadcast_lobby_stats(); print(f"[GAME] Start PvP: {p1['nickname']} vs {p2['nickname']}. Room: {r_id}. R:{game.num_rounds}"); start_game_loop(r_id)
-    except Exception as e: print(f"[ERROR] PvP creation failed {r_id}: {e}"); leave_room(r_id, sid=p1['sid']); leave_room(r_id, sid=p2['sid']);
-    if r_id in active_games: del active_games[r_id]; add_player_to_lobby(p1['sid']); add_player_to_lobby(p2['sid']); emit('join_game_fail', {'message': 'Ошибка сервера.'}, room=p1['sid']); emit('join_game_fail', {'message': 'Ошибка сервера.'}, room=p2['sid'])
+    join_room(r_id, sid=p2['sid'])
+    remove_player_from_lobby(p2['sid'])
+    
+    # --- НАЧАЛО ИСПРАВЛЕНИЯ (ОШИБКА 2: TRY/EXCEPT) ---
+    try: 
+        game = GameState(p1, all_leagues_data, p2, 'pvp', g_join['settings'])
+        active_games[r_id] = {'game': game, 'turn_id': None, 'pause_id': None, 'skip_votes': set(), 'last_round_end_reason': None}
+        broadcast_lobby_stats()
+        print(f"[GAME] Start PvP: {p1['nickname']} vs {p2['nickname']}. Room: {r_id}. R:{game.num_rounds}")
+        start_game_loop(r_id)
+    
+    except Exception as e: 
+        print(f"[ERROR] PvP creation failed {r_id}: {e}")
+        leave_room(r_id, sid=p1['sid'])
+        leave_room(r_id, sid=p2['sid'])
+        if r_id in active_games: 
+            del active_games[r_id]
+        
+        # Возвращаем игроков в лобби при ошибке
+        add_player_to_lobby(p1['sid'])
+        add_player_to_lobby(p2['sid'])
+        emit('join_game_fail', {'message': 'Ошибка сервера.'}, room=p1['sid'])
+        emit('join_game_fail', {'message': 'Ошибка сервера.'}, room=p2['sid'])
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 @socketio.on('submit_guess')
 def handle_submit_guess(data):
     room_id, guess, sid = data.get('roomId'), data.get('guess'), request.sid
     game_session = active_games.get(room_id)
     if not game_session: return
-    game = game_session['game'] # <-- ВОССТАНОВЛЕННАЯ СТРОКА
+    game = game_session['game'] 
     if game.players[game.current_player_index].get('sid') != sid: return
     result = game.process_guess(guess); current_player_nick = game.players[game.current_player_index]['nickname']
     print(f"[GUESS] {room_id}: {current_player_nick} '{guess}' -> {result['result']}")
@@ -475,7 +562,7 @@ def handle_surrender(data):
     room_id, sid = data.get('roomId'), request.sid
     game_session = active_games.get(room_id)
     if not game_session: return
-    game = game_session['game'] # <-- ВОССТАНОВЛЕННАЯ СТРОКА
+    game = game_session['game'] 
     if game.players[game.current_player_index].get('sid') != sid: return
     game_session['turn_id'] = None; game_session['last_round_end_reason'] = 'surrender'
     surrendering_player_nick = game.players[game.current_player_index]['nickname']
