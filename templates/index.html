@@ -9,7 +9,7 @@
         :root {
             --bg-color: #1a1a1a; --primary-color: #2c2c2c; --secondary-color: #444;
             --text-color: #f0f0f0; --accent-color: #0088cc; --accent-hover-color: #00aaff;
-            --correct-color: #28a745; --incorrect-color: #dc3545;
+            --correct-color: #28a745; --incorrect-color: #dc3545; --cancel-color: #aa4a44;
             --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
         }
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: var(--font-family); background-color: var(--bg-color); color: var(--text-color); overflow: hidden; }
@@ -34,8 +34,23 @@
         #named-players-list, #summary-player-list { list-style: none; padding: 0; max-height: 40vh; overflow-y: auto; margin: 15px 0; text-align: left; }
         #leaderboard-screen table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         #leaderboard-screen th, #leaderboard-screen td { padding: 10px; border-bottom: 1px solid var(--secondary-color); text-align: left; }
-        /* Стили для нового экрана */
         #summary-screen .container { text-align: center; }
+
+        /* --- НОВЫЕ СТИЛИ ДЛЯ КНОПКИ ОТМЕНЫ --- */
+        .cancel-btn { background-color: var(--cancel-color); }
+        .cancel-btn:hover { background-color: #c45a54; }
+
+        /* --- НОВЫЕ СТИЛИ ДЛЯ ВКЛАДОК НАСТРОЕК --- */
+        .tabs-container { display: flex; margin-bottom: 15px; }
+        .tab-btn { flex: 1; padding: 10px; background-color: var(--primary-color); border: 1px solid var(--secondary-color); color: var(--text-color); cursor: pointer; border-radius: 0; }
+        .tab-btn:first-child { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
+        .tab-btn:last-child { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
+        .tab-btn.active { background-color: var(--accent-color); border-color: var(--accent-color); font-weight: bold; }
+        .tab-content { display: none; padding: 15px; background-color: var(--primary-color); border-radius: 8px; }
+        .tab-content.active { display: block; }
+        #clubs-selection-list { max-height: 200px; overflow-y: auto; border: 1px solid var(--secondary-color); padding: 10px; border-radius: 8px; }
+        .club-item { display: block; text-align: left; margin: 5px 0; }
+        #settings-error-msg { color: var(--incorrect-color); height: 20px; margin-top: 10px; }
     </style>
 </head>
 <body>
@@ -43,8 +58,43 @@
     <div id="loading-screen" class="screen active"><div class="container"><div class="loader"></div><p>Подключение...</p></div></div>
     <div id="nickname-screen" class="screen"><div class="container"><h2>Добро пожаловать!</h2><p>Придумайте себе уникальный никнейм.</p><input type="text" id="nickname-input" placeholder="Введите ваш никнейм"><button id="submit-nickname-btn">Сохранить</button><p id="nickname-error" style="color: var(--incorrect-color);"></p></div></div>
     <div id="lobby-screen" class="screen"><div class="container"><h1>Лобби</h1><p id="welcome-message"></p><div id="lobby-stats"></div><div class="lobby-actions" style="display: flex; justify-content: space-around; margin-bottom: 20px;"><button id="create-game-btn">Создать игру</button><button id="start-training-btn">Тренировка</button><button id="show-leaderboard-btn">Рейтинг</button></div><h2>Открытые игры:</h2><div id="open-games-list"></div></div></div>
-    <div id="settings-screen" class="screen"><div class="container"><h2>Настройки Игры</h2><div class="setting"><label for="league-select">Лига:</label><select id="league-select"><option value="РПЛ">РПЛ</option></select></div><div class="setting"><label for="time-bank-input">Тайм-банк (сек):</label><input type="number" id="time-bank-input" value="90" min="30" max="300"></div><div class="setting"><label>Выбор клубов:</label><div id="clubs-selection"></div></div><button id="confirm-create-game-btn">Создать PvP Игру</button><button id="confirm-training-btn" style="display: none;">Начать Тренировку</button><button id="back-to-lobby-btn">Назад</button></div></div>
     
+    <div id="settings-screen" class="screen">
+        <div class="container">
+            <h2 id="settings-title">Настройки Игры</h2>
+            <div class="setting">
+                <label for="league-select">Лига:</label>
+                <select id="league-select"><option value="РПЛ">РПЛ</option></select>
+            </div>
+            <div class="setting">
+                <label for="time-bank-input">Тайм-банк (сек):</label>
+                <input type="number" id="time-bank-input" value="90" min="30" max="300">
+            </div>
+
+            <div class="tabs-container">
+                <button class="tab-btn active" data-tab="random">Случайные клубы</button>
+                <button class="tab-btn" data-tab="manual">Выбрать вручную</button>
+            </div>
+
+            <div id="tab-random" class="tab-content active">
+                <label for="random-clubs-slider" id="random-clubs-label">Количество клубов: 10</label>
+                <p style="font-size: 12px; color: #aaa;">Игра выберет указанное количество случайных клубов из лиги.</p>
+                <input type="range" id="random-clubs-slider" min="3" max="16" value="10" style="width: 100%;">
+            </div>
+
+            <div id="tab-manual" class="tab-content">
+                <p style="font-size: 12px; color: #aaa;">Выберите от 3 до <span id="max-clubs-count">16</span> клубов для игры.</p>
+                <p id="manual-clubs-count" style="font-weight: bold;">Выбрано: 0</p>
+                <div id="clubs-selection-list">
+                    </div>
+            </div>
+
+            <p id="settings-error-msg"></p>
+            <button id="confirm-create-game-btn" disabled>Создать PvP Игру</button>
+            <button id="confirm-training-btn" style="display: none;" disabled>Начать Тренировку</button>
+            <button id="back-to-lobby-btn">Назад</button>
+        </div>
+    </div>
     <div id="game-screen" class="screen">
         <div class="container">
             <div class="game-header">
@@ -57,7 +107,7 @@
             <p id="guess-result-msg" style="height: 20px;"></p>
             <input type="text" id="guess-input" placeholder="Введите фамилию игрока">
             <button id="submit-guess-btn">Ответить</button>
-            <button id="surrender-btn" style="background-color: #aa4a44;">Сдаться</button>
+            <button id="surrender-btn" style="background-color: var(--cancel-color);">Сдаться</button>
         </div>
     </div>
 
@@ -91,19 +141,38 @@
             tg.ready();
             tg.expand();
 
-            let localState = { nickname: null, telegramId: null, currentRoomId: null, myPlayerIndex: null };
-            let gameTimerInterval = null; // <-- ИСПРАВЛЕНИЕ 1
+            let localState = { 
+                nickname: null, 
+                telegramId: null, 
+                currentRoomId: null, 
+                myPlayerIndex: null,
+                maxClubsInLeague: 16 // default
+            };
+            let gameTimerInterval = null; 
             const screens = {
                 loading: document.getElementById('loading-screen'),
                 nickname: document.getElementById('nickname-screen'),
                 lobby: document.getElementById('lobby-screen'),
                 settings: document.getElementById('settings-screen'),
                 game: document.getElementById('game-screen'),
-                summary: document.getElementById('summary-screen'), // Новый экран
+                summary: document.getElementById('summary-screen'),
                 leaderboard: document.getElementById('leaderboard-screen'),
             };
 
-            const skipPauseBtn = document.getElementById('skip-pause-btn');
+            // --- Элементы управления настройками ---
+            const settingsTitle = document.getElementById('settings-title');
+            const confirmCreateBtn = document.getElementById('confirm-create-game-btn');
+            const confirmTrainingBtn = document.getElementById('confirm-training-btn');
+            const tabButtons = document.querySelectorAll('.tab-btn');
+            const tabContents = document.querySelectorAll('.tab-content');
+            const randomClubsSlider = document.getElementById('random-clubs-slider');
+            const randomClubsLabel = document.getElementById('random-clubs-label');
+            const clubsSelectionList = document.getElementById('clubs-selection-list');
+            const manualClubsCount = document.getElementById('manual-clubs-count');
+            const settingsErrorMsg = document.getElementById('settings-error-msg');
+            const maxClubsCountSpan = document.getElementById('max-clubs-count');
+            const openGamesList = document.getElementById('open-games-list');
+
 
             function showScreen(screenName) {
                 Object.values(screens).forEach(screen => screen.classList.remove('active'));
@@ -112,7 +181,6 @@
 
             // --- ОБРАБОТЧИКИ СОБЫТИЙ ---
 
-            // Аутентификация и лобби (без изменений)
             socket.on('auth_request', () => tg.initData && socket.emit('login_with_telegram', { initData: tg.initData }));
             socket.on('request_nickname', (data) => { localState.telegramId = data.telegram_id; showScreen('nickname'); });
             socket.on('auth_status', (data) => {
@@ -124,14 +192,10 @@
                     document.getElementById('nickname-error').textContent = data.message || 'Ошибка аутентификации.';
                 }
             });
-            // ... остальная логика лобби, настроек и т.д. ...
-
-            // --- НОВАЯ ЛОГИКА ДЛЯ ЭКРАНА ИТОГОВ РАУНДА ---
 
             socket.on('round_summary', (data) => {
-                if (gameTimerInterval) clearInterval(gameTimerInterval); // <-- ИСПРАВЛЕНИЕ 2
+                if (gameTimerInterval) clearInterval(gameTimerInterval); 
                 
-                // Заполняем данными экран итогов
                 document.getElementById('summary-club-name').textContent = data.clubName;
                 const p1_score = data.scores[0] || 0;
                 const p2_score = data.scores[1] || 0;
@@ -139,7 +203,6 @@
 
                 const summaryList = document.getElementById('summary-player-list');
                 summaryList.innerHTML = '<h4>Весь состав:</h4>';
-                const namedFullNames = data.namedPlayers.map(p => p.full_name);
                 
                 data.fullPlayerList.forEach(fullName => {
                     const li = document.createElement('li');
@@ -153,48 +216,40 @@
                     summaryList.appendChild(li);
                 });
 
-                // Сбрасываем текст кнопки и показываем экран
-                skipPauseBtn.textContent = 'Следующий раунд';
-                skipPauseBtn.disabled = false;
+                document.getElementById('skip-pause-btn').textContent = 'Следующий раунд';
+                document.getElementById('skip-pause-btn').disabled = false;
                 showScreen('summary');
             });
 
-            // Игрок нажимает кнопку "Следующий раунд"
-            skipPauseBtn.addEventListener('click', () => {
+            document.getElementById('skip-pause-btn').addEventListener('click', () => {
                 socket.emit('request_skip_pause', { roomId: localState.currentRoomId });
-                // Блокируем кнопку после нажатия, чтобы избежать повторных отправок
-                skipPauseBtn.disabled = true;
-                skipPauseBtn.textContent = 'Ожидаем второго игрока...';
+                document.getElementById('skip-pause-btn').disabled = true;
+                document.getElementById('skip-pause-btn').textContent = 'Ожидаем второго игрока...';
             });
 
-            // Сервер сообщает об обновлении голосов
             socket.on('skip_vote_update', (data) => {
-                // Обновляем текст кнопки для всех игроков
-                const btn = document.getElementById('skip-pause-btn');
-                btn.textContent = `Следующий раунд (${data.count}/2)`;
+                document.getElementById('skip-pause-btn').textContent = `Следующий раунд (${data.count}/2)`;
             });
 
-            // --- СТАРЫЕ ОБРАБОТЧИКИ ---
             socket.on('round_started', (state) => {
                 showScreen('game');
                 updateGameUI(state);
             });
             
-            // --- ИСПРАВЛЕНИЕ 5: ПОЛНОСТЬЮ ПЕРЕПИСАННАЯ ФУНКЦИЯ ---
             function updateGameUI(state) {
-                // Очищаем старый таймер, если он был
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
 
                 localState.currentRoomId = state.roomId;
+                localState.myPlayerIndex = -1; // Сброс
                 for (const index in state.players) {
                     if (state.players[index].nickname === localState.nickname) {
                         localState.myPlayerIndex = parseInt(index); break;
                     }
                 }
+                
                 document.getElementById('round-info').textContent = `Раунд ${state.round}/${state.totalRounds}`;
                 document.getElementById('club-name-display').textContent = state.clubName;
                 
-                // Обновляем инфо игроков
                 for (let i = 0; i < 2; i++) {
                     const playerInfoEl = document.getElementById(`player-${i}-info`);
                     if (state.players[i]) {
@@ -208,9 +263,7 @@
 
                         playerInfoEl.classList.toggle('active', i === state.currentPlayerIndex);
 
-                        // --- ЛОГИКА ТАЙМЕРА ---
-                        // Если это текущий игрок, запускаем визуальный таймер
-                        if (i === state.currentPlayerIndex) {
+                        if (i === state.currentPlayerIndex && timeLeft > 0) {
                             gameTimerInterval = setInterval(() => {
                                 timeLeft -= 0.1;
                                 if (timeLeft < 0) timeLeft = 0;
@@ -220,14 +273,11 @@
                                 }
                             }, 100);
                         }
-                        // --- КОНЕЦ ЛОГИКИ ТАЙМЕРА ---
-
                     } else {
                         playerInfoEl.style.display = 'none';
                     }
                 }
                 
-                // Обновляем список названных игроков
                 const namedPlayersList = document.getElementById('named-players-list');
                 namedPlayersList.innerHTML = '';
                 state.namedPlayers.forEach(p => {
@@ -236,7 +286,6 @@
                     namedPlayersList.appendChild(li);
                 });
                 
-                // Обновляем инпуты
                 const myTurn = state.currentPlayerIndex === localState.myPlayerIndex;
                 const guessInput = document.getElementById('guess-input');
                 guessInput.disabled = !myTurn;
@@ -245,15 +294,13 @@
                 
                 if(myTurn) guessInput.focus();
                 
-                // Очищаем поле сообщения
                 document.getElementById('guess-result-msg').textContent = '';
             }
-            // --- КОНЕЦ ИСПРАВЛЕННОЙ ФУНКЦИИ ---
 
             socket.on('game_over', (data) => {
-                if (gameTimerInterval) clearInterval(gameTimerInterval); // <-- ИСПРАВЛЕНИЕ 3
+                if (gameTimerInterval) clearInterval(gameTimerInterval);
                 let message = `Игра окончена!\nСчет: ${data.final_scores[0]} - ${data.final_scores[1] || 0}\n\n`;
-                if(data.rating_changes && data.players[localState.myPlayerIndex]) {
+                if(data.rating_changes && localState.myPlayerIndex !== -1 && data.players[localState.myPlayerIndex]) {
                     const myChangesKey = localState.myPlayerIndex === 0 ? 'p1' : 'p2';
                     const myChanges = data.rating_changes[myChangesKey];
                     const ratingDiff = myChanges.new - myChanges.old;
@@ -263,14 +310,11 @@
                 showScreen('lobby');
             });
 
-            // --- ИСПРАВЛЕНИЕ 4: НЕДОСТАЮЩИЕ ОБРАБОТЧИКИ ---
-            // Обработчик, который мы пропустили: обновляет UI после каждого хода
             socket.on('turn_updated', (state) => {
                 console.log("Turn updated, redrawing UI");
                 updateGameUI(state);
             });
 
-            // Обработчик, который мы пропустили: показывает результат догадки
             socket.on('guess_result', (data) => {
                 const msgEl = document.getElementById('guess-result-msg');
                 if (data.result === 'correct') {
@@ -286,13 +330,10 @@
                     msgEl.textContent = '❌ Неверно';
                     msgEl.style.color = 'var(--incorrect-color)';
                 }
-                // Очищаем сообщение через 2 секунды
                 setTimeout(() => { msgEl.textContent = ''; }, 2000);
             });
-            // --- КОНЕЦ НЕДОСТАЮЩИХ ОБРАБОТЧИКОВ ---
             
-            // --- Остальная часть JS-кода (настройки, таблица лидеров и т.д.) остается без изменений ---
-            // Код для кнопок, инпутов и т.д.
+            // --- КНОПКИ ЛОББИ И НАСТРОЕК ---
             const nicknameInput = document.getElementById('nickname-input');
             const submitNicknameBtn = document.getElementById('submit-nickname-btn');
             submitNicknameBtn.addEventListener('click', () => {
@@ -307,26 +348,116 @@
             });
 
             function openSettings(isTraining) {
-                document.getElementById('confirm-training-btn').style.display = isTraining ? 'block' : 'none';
-                document.getElementById('confirm-create-game-btn').style.display = isTraining ? 'none' : 'block';
+                settingsTitle.textContent = isTraining ? 'Настройки Тренировки' : 'Настройки PvP Игры';
+                confirmTrainingBtn.style.display = isTraining ? 'block' : 'none';
+                confirmCreateBtn.style.display = isTraining ? 'none' : 'block';
+                
+                // Сброс вкладок
+                tabButtons.forEach(btn => btn.classList.remove('active'));
+                tabContents.forEach(content => content.classList.remove('active'));
+                document.querySelector('.tab-btn[data-tab="random"]').classList.add('active');
+                document.getElementById('tab-random').classList.add('active');
+
                 socket.emit('get_league_clubs', { league: document.getElementById('league-select').value });
                 showScreen('settings');
             }
 
-            socket.on('league_clubs_data', (data) => {
-                const clubsSelection = document.getElementById('clubs-selection');
-                clubsSelection.innerHTML = '';
-                data.clubs.forEach(club => {
-                    clubsSelection.innerHTML += `<div class="club-item"><input type="checkbox" id="club-${club}" value="${club}"><label for="club-${club}" style="margin-left: 8px;">${club}</label></div>`;
+            // --- НОВАЯ ЛОГИКА ЭКРАНА НАСТРОЕК ---
+
+            // Переключение вкладок
+            tabButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    tabButtons.forEach(btn => btn.classList.remove('active'));
+                    button.classList.add('active');
+                    
+                    const tabId = button.getAttribute('data-tab');
+                    tabContents.forEach(content => {
+                        content.classList.toggle('active', content.id === `tab-${tabId}`);
+                    });
+                    validateSettings(); // Проверяем валидность при смене вкладки
                 });
             });
 
+            // Обновление данных о клубах
+            socket.on('league_clubs_data', (data) => {
+                localState.maxClubsInLeague = data.clubs.length;
+                
+                // Настройка ползунка
+                randomClubsSlider.max = localState.maxClubsInLeague;
+                const defaultValue = Math.min(10, localState.maxClubsInLeague);
+                randomClubsSlider.value = defaultValue;
+                randomClubsLabel.textContent = `Количество клубов: ${defaultValue}`;
+                
+                // Настройка текста
+                maxClubsCountSpan.textContent = localState.maxClubsInLeague;
+                
+                // Заполнение списка чекбоксов
+                clubsSelectionList.innerHTML = '';
+                data.clubs.forEach(club => {
+                    clubsSelectionList.innerHTML += `<label class="club-item"><input type="checkbox" id="club-${club}" value="${club}"><span style="margin-left: 8px;">${club}</span></label>`;
+                });
+                
+                validateSettings(); // Проверяем валидность при загрузке
+            });
+
+            // Слушатели для валидации
+            randomClubsSlider.addEventListener('input', () => {
+                randomClubsLabel.textContent = `Количество клубов: ${randomClubsSlider.value}`;
+                validateSettings();
+            });
+
+            clubsSelectionList.addEventListener('change', (e) => {
+                if (e.target.type === 'checkbox') {
+                    validateSettings();
+                }
+            });
+
+            // Функция валидации
+            function validateSettings() {
+                const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
+                let isValid = false;
+                let error = "";
+
+                if (activeTab === 'random') {
+                    const count = parseInt(randomClubsSlider.value, 10);
+                    if (count < 3) {
+                        error = "Нужно выбрать минимум 3 клуба.";
+                    } else {
+                        isValid = true;
+                    }
+                } else if (activeTab === 'manual') {
+                    const checkedCount = document.querySelectorAll('#clubs-selection-list input:checked').length;
+                    manualClubsCount.textContent = `Выбрано: ${checkedCount}`;
+                    if (checkedCount < 3) {
+                        error = `Нужно выбрать минимум 3 клуба (выбрано ${checkedCount}).`;
+                    } else {
+                        isValid = true;
+                    }
+                }
+                
+                settingsErrorMsg.textContent = error;
+                confirmCreateBtn.disabled = !isValid;
+                confirmTrainingBtn.disabled = !isValid;
+            }
+
+            // Обновленная функция создания игры
             function handleCreateGame(isTraining) {
-                const settings = {
+                const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
+                let settings = {
                     league: document.getElementById('league-select').value,
                     time_bank: parseFloat(document.getElementById('time-bank-input').value),
-                    selected_clubs: Array.from(document.querySelectorAll('#clubs-selection input:checked')).map(cb => cb.value)
+                    num_rounds: 0,
+                    selected_clubs: []
                 };
+
+                if (activeTab === 'random') {
+                    settings.num_rounds = parseInt(randomClubsSlider.value, 10);
+                    // selected_clubs остается пустым, сервер сам выберет
+                } else if (activeTab === 'manual') {
+                    settings.selected_clubs = Array.from(document.querySelectorAll('#clubs-selection-list input:checked')).map(cb => cb.value);
+                    settings.num_rounds = settings.selected_clubs.length;
+                }
+
                 if (isTraining) {
                     socket.emit('start_game', { mode: 'solo', nickname: localState.nickname, settings: settings });
                 } else {
@@ -334,13 +465,21 @@
                     showScreen('lobby');
                 }
             }
-            document.getElementById('confirm-create-game-btn').addEventListener('click', () => handleCreateGame(false));
-            document.getElementById('confirm-training-btn').addEventListener('click', () => handleCreateGame(true));
+            // --- КОНЕЦ НОВОЙ ЛОГИКИ НАСТРОЕК ---
+
+
+            confirmCreateBtn.addEventListener('click', () => handleCreateGame(false));
+            confirmTrainingBtn.addEventListener('click', () => handleCreateGame(true));
             
-            const openGamesList = document.getElementById('open-games-list');
+            // --- ОБНОВЛЕННАЯ ЛОГИКА ЛОББИ ---
             openGamesList.addEventListener('click', (e) => {
+                // Нажатие на "Войти"
                 if (e.target.classList.contains('join-btn')) {
                     socket.emit('join_game', { creator_sid: e.target.getAttribute('data-creator-sid'), nickname: localState.nickname });
+                }
+                // Нажатие на "Отменить"
+                if (e.target.classList.contains('cancel-btn')) {
+                    socket.emit('cancel_game');
                 }
             });
 
@@ -351,9 +490,28 @@
                     if (game.selected_clubs_names && game.selected_clubs_names.length > 0) {
                         clubsText = `Клубы: ${game.selected_clubs_names.join(', ')}`;
                     }
-                    openGamesList.innerHTML += `<div class="game-card"><div class="game-card-info"><p><strong>${game.creator_nickname}</strong> (${game.creator_rating})</p><p style="font-size:12px;">${clubsText}</p></div><button class="join-btn" data-creator-sid="${game.creator_sid}">Войти</button></div>`;
+
+                    // ОПРЕДЕЛЯЕМ ТИП КНОПКИ
+                    let buttonHtml = '';
+                    if (game.creator_sid === socket.id) {
+                        // Это моя игра, я могу ее отменить
+                        buttonHtml = `<button class="cancel-btn" data-creator-sid="${game.creator_sid}">Отменить</button>`;
+                    } else {
+                        // Это чужая игра, я могу войти
+                        buttonHtml = `<button class="join-btn" data-creator-sid="${game.creator_sid}">Войти</button>`;
+                    }
+
+                    openGamesList.innerHTML += `
+                        <div class="game-card">
+                            <div class="game-card-info">
+                                <p><strong>${game.creator_nickname}</strong> (${game.creator_rating})</p>
+                                <p style="font-size:12px;">${clubsText}</p>
+                            </div>
+                            ${buttonHtml}
+                        </div>`;
                 });
             });
+            // --- КОНЕЦ ОБНОВЛЕННОЙ ЛОГИКИ ЛОББИ ---
             
             socket.on('lobby_stats_update', (stats) => {
                 document.getElementById('lobby-stats').textContent = `В лобби: ${stats.players_in_lobby} | В игре: ${stats.players_in_game}`;
