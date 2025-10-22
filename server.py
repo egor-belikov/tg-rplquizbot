@@ -171,7 +171,7 @@ class GameState:
         self.settings = settings or default_settings
         selected_clubs = self.settings.get('selected_clubs')
         num_rounds_setting = self.settings.get('num_rounds', 0)
-        available_clubs_keys = list(self.all_clubs_data.keys()) # Получаем ключи один раз
+        available_clubs_keys = list(self.all_clubs_data.keys())
 
         if selected_clubs and len(selected_clubs) > 0:
             valid_selected_clubs = [c for c in selected_clubs if c in self.all_clubs_data]
@@ -245,27 +245,34 @@ class GameState:
     def switch_player(self):
         if len(self.players) > 1: self.current_player_index = 1 - self.current_player_index
 
-    def is_round_over(self): return len(self.players_for_comparison) > 0 and len(self.named_players) == len(self.players_for_comparison)
+    def is_round_over(self):
+        return len(self.players_for_comparison) > 0 and len(self.named_players) == len(self.players_for_comparison)
 
+    # --- ИСПРАВЛЕНИЕ: Отступы и разделение строк ---
     def is_game_over(self):
-        if self.current_round >= (self.num_rounds - 1): self.end_reason = 'normal'; return True
-        if len(self.players) > 1: score_diff = abs(self.scores[0] - self.scores[1]); rounds_left = self.num_rounds - (self.current_round + 1);
-            if score_diff > rounds_left: self.end_reason = 'unreachable_score'; return True
+        """Проверяет, завершена ли игра."""
+        # Проверка на максимальное количество раундов
+        if self.current_round >= (self.num_rounds - 1):
+            self.end_reason = 'normal'
+            return True
+
+        # Проверка на недосягаемый счет в PvP
+        if len(self.players) > 1:
+            score_diff = abs(self.scores[0] - self.scores[1])
+            rounds_left = self.num_rounds - (self.current_round + 1)
+            if score_diff > rounds_left:
+                self.end_reason = 'unreachable_score'
+                return True
+
+        # Если ни одно из условий не выполнено
         return False
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 def get_game_state_for_client(game_session, room_id):
     game = game_session['game']
     spectators = game_session.get('spectators', [])
     spectator_text = format_spectator_info(spectators)
-    return {
-        'roomId': room_id, 'mode': game.mode,
-        'players': {i: {'nickname': p['nickname'], 'sid': p.get('sid')} for i, p in game.players.items()},
-        'scores': game.scores, 'round': game.current_round + 1, 'totalRounds': game.num_rounds,
-        'clubName': game.current_club_name, 'namedPlayers': game.named_players,
-        'fullPlayerList': [p['full_name'] for p in game.players_for_comparison],
-        'currentPlayerIndex': game.current_player_index, 'timeBanks': game.time_banks,
-        'spectatorInfoText': spectator_text
-    }
+    return {'roomId': room_id, 'mode': game.mode, 'players': {i: {'nickname': p['nickname'], 'sid': p.get('sid')} for i, p in game.players.items()}, 'scores': game.scores, 'round': game.current_round + 1, 'totalRounds': game.num_rounds, 'clubName': game.current_club_name, 'namedPlayers': game.named_players, 'fullPlayerList': [p['full_name'] for p in game.players_for_comparison], 'currentPlayerIndex': game.current_player_index, 'timeBanks': game.time_banks, 'spectatorInfoText': spectator_text}
 
 def start_next_human_turn(room_id):
     game_session = active_games.get(room_id)
@@ -277,20 +284,14 @@ def start_next_human_turn(room_id):
     time_left = game.time_banks[game.current_player_index]
     current_player_nick = game.players[game.current_player_index]['nickname']
     print(f"[TURN] {room_id}: Ход {current_player_nick} (Idx: {game.current_player_index}, Time: {time_left:.1f}s)")
-    if time_left > 0:
-        socketio.start_background_task(turn_watcher, room_id, turn_id, time_left)
-    else:
-        print(f"[TURN_END] {room_id}: Время уже вышло для {current_player_nick}.")
-        on_timer_end(room_id)
-        return
+    if time_left > 0: socketio.start_background_task(turn_watcher, room_id, turn_id, time_left)
+    else: print(f"[TURN_END] {room_id}: Время уже вышло для {current_player_nick}."); on_timer_end(room_id); return
     socketio.emit('turn_updated', get_game_state_for_client(game_session, room_id), room=room_id)
 
 def turn_watcher(room_id, turn_id, time_limit):
     socketio.sleep(time_limit)
     game_session = active_games.get(room_id)
-    if game_session and game_session.get('turn_id') == turn_id:
-        print(f"[TIMEOUT] {room_id}: Время вышло для хода {turn_id}.")
-        on_timer_end(room_id)
+    if game_session and game_session.get('turn_id') == turn_id: print(f"[TIMEOUT] {room_id}: Время вышло для хода {turn_id}."); on_timer_end(room_id)
 
 def on_timer_end(room_id):
     game_session = active_games.get(room_id)
@@ -362,26 +363,18 @@ def start_game_loop(room_id):
 def show_round_summary_and_schedule_next(room_id):
     game_session = active_games.get(room_id)
     if not game_session: return
-    game = game_session['game']
-    p1_n = len([p for p in game.named_players if p['by'] == 0])
-    p2_n = len([p for p in game.named_players if p.get('by') == 1]) if game.mode != 'solo' else 0
+    game = game_session['game']; p1_n = len([p for p in game.named_players if p['by'] == 0]); p2_n = len([p for p in game.named_players if p.get('by') == 1]) if game.mode != 'solo' else 0
     round_res = { 'club_name': game.current_club_name, 'p1_named': p1_n, 'p2_named': p2_n, 'result_type': game_session.get('last_round_end_reason', 'completed'), 'player_nickname': game_session.get('last_round_end_player_nickname', None), 'winner_index': game_session.get('last_round_winner_index') }
-    game.round_history.append(round_res)
-    print(f"[SUMMARY] {room_id}: Раунд {game.current_round + 1} завершен. Итог: {round_res['result_type']}")
-    game_session['skip_votes'] = set()
-    game_session['last_round_end_reason'] = None
-    game_session['last_round_end_player_nickname'] = None
-    game_session['last_round_winner_index'] = None # Сбрасываем победителя раунда
+    game.round_history.append(round_res); print(f"[SUMMARY] {room_id}: Раунд {game.current_round + 1} завершен. Итог: {round_res['result_type']}")
+    game_session['skip_votes'] = set(); game_session['last_round_end_reason'] = None; game_session['last_round_end_player_nickname'] = None; game_session['last_round_winner_index'] = None
     pause_end_time = time.time() + PAUSE_BETWEEN_ROUNDS
     summary_data = { 'clubName': game.current_club_name, 'fullPlayerList': [p['full_name'] for p in game.players_for_comparison], 'namedPlayers': game.named_players, 'players': {i: {'nickname': p['nickname']} for i, p in game.players.items()}, 'scores': game.scores, 'mode': game.mode, 'pauseEndTime': pause_end_time }
     socketio.emit('round_summary', summary_data, room=room_id)
-    pause_id = f"pause_{room_id}_{game.current_round}"
-    game_session['pause_id'] = pause_id
+    pause_id = f"pause_{room_id}_{game.current_round}"; game_session['pause_id'] = pause_id
     socketio.start_background_task(pause_watcher, room_id, pause_id)
 
 def pause_watcher(room_id, pause_id):
-    socketio.sleep(PAUSE_BETWEEN_ROUNDS)
-    game_session = active_games.get(room_id)
+    socketio.sleep(PAUSE_BETWEEN_ROUNDS); game_session = active_games.get(room_id)
     if game_session and game_session.get('pause_id') == pause_id: print(f"[GAME] {room_id}: Пауза окончена."); start_game_loop(room_id)
 
 def get_open_games_for_lobby():
@@ -397,14 +390,11 @@ def get_active_games_for_lobby():
     active_list = []
     for room_id, game_session in active_games.items():
         game = game_session.get('game')
-        # Показываем только PvP игры, которые еще идут
-        if game and game.mode == 'pvp' and len(game.players) == 2:
-             active_list.append({'roomId': room_id, 'player1_nickname': game.players[0]['nickname'], 'player2_nickname': game.players[1]['nickname'], 'spectator_count': len(game_session.get('spectators', []))})
+        if game and game.mode == 'pvp' and len(game.players) == 2: active_list.append({'roomId': room_id, 'player1_nickname': game.players[0]['nickname'], 'player2_nickname': game.players[1]['nickname'], 'spectator_count': len(game_session.get('spectators', []))})
     return active_list
 
 def emit_lobby_update():
-    open_games_list = get_open_games_for_lobby()
-    active_games_list = get_active_games_for_lobby()
+    open_games_list = get_open_games_for_lobby(); active_games_list = get_active_games_for_lobby()
     socketio.emit('update_lobby', {'open_games': open_games_list, 'active_games': active_games_list})
 
 # --- Обработчики Socket.IO ---
@@ -608,17 +598,12 @@ def handle_submit_guess(data):
         game.time_banks[game.current_player_index] -= time_spent
         if game.time_banks[game.current_player_index] < 0: print(f"[TIMEOUT] {room_id}: {nick} correct but time ran out."); on_timer_end(room_id); return
         game.add_named_player(result['player_data'], game.current_player_index)
-        # Отправляем обновленное состояние всем, включая названного игрока
-        socketio.emit('turn_updated', get_game_state_for_client(game_session, room_id), room=room_id) # Используем turn_updated
-        # Отдельно сообщаем результат угадывания тому, кто угадывал
+        socketio.emit('turn_updated', get_game_state_for_client(game_session, room_id), room=room_id)
         emit('guess_result', {'result': result['result'], 'corrected_name': result['player_data']['full_name']})
-
         if game.is_round_over(): print(f"[ROUND_END] {room_id}: Round complete (all named). Draw 0.5-0.5"); game_session['last_round_end_reason'] = 'completed';
             if game.mode == 'pvp': game.scores[0] += 0.5; game.scores[1] += 0.5; game_session['last_round_winner_index'] = 'draw'
             show_round_summary_and_schedule_next(room_id)
-        # else: # Не нужно, т.к. turn_updated уже отправили выше
-        #     start_next_human_turn(room_id)
-    else: emit('guess_result', {'result': result['result']}) # Only to guesser
+    else: emit('guess_result', {'result': result['result']})
 
 @socketio.on('surrender_round')
 def handle_surrender(data):
