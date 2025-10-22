@@ -29,7 +29,8 @@
         .game-card-info p { margin: 4px 0; }
         #settings-screen .container { text-align: left; }
         #game-screen .game-header { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 15px; }
-        .player-info.active { border-bottom: 2px solid var(--accent-color); }
+        .player-info { padding: 5px; border-radius: 4px; }
+        .player-info.active { box-shadow: 0 2px 0 var(--accent-color); }
         #named-players-list, #summary-player-list { list-style: none; padding: 0; max-height: 40vh; overflow-y: auto; margin: 15px 0; text-align: left; }
         #leaderboard-screen table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         #leaderboard-screen th, #leaderboard-screen td { padding: 10px; border-bottom: 1px solid var(--secondary-color); text-align: left; }
@@ -91,6 +92,7 @@
             tg.expand();
 
             let localState = { nickname: null, telegramId: null, currentRoomId: null, myPlayerIndex: null };
+            let gameTimerInterval = null; // <-- ИСПРАВЛЕНИЕ 1
             const screens = {
                 loading: document.getElementById('loading-screen'),
                 nickname: document.getElementById('nickname-screen'),
@@ -118,6 +120,8 @@
                     localState.nickname = data.nickname;
                     document.getElementById('welcome-message').textContent = `Добро пожаловать, ${localState.nickname}!`;
                     showScreen('lobby');
+                } else {
+                    document.getElementById('nickname-error').textContent = data.message || 'Ошибка аутентификации.';
                 }
             });
             // ... остальная логика лобби, настроек и т.д. ...
@@ -125,6 +129,8 @@
             // --- НОВАЯ ЛОГИКА ДЛЯ ЭКРАНА ИТОГОВ РАУНДА ---
 
             socket.on('round_summary', (data) => {
+                if (gameTimerInterval) clearInterval(gameTimerInterval); // <-- ИСПРАВЛЕНИЕ 2
+                
                 // Заполняем данными экран итогов
                 document.getElementById('summary-club-name').textContent = data.clubName;
                 const p1_score = data.scores[0] || 0;
@@ -174,7 +180,11 @@
                 updateGameUI(state);
             });
             
+            // --- ИСПРАВЛЕНИЕ 5: ПОЛНОСТЬЮ ПЕРЕПИСАННАЯ ФУНКЦИЯ ---
             function updateGameUI(state) {
+                // Очищаем старый таймер, если он был
+                if (gameTimerInterval) clearInterval(gameTimerInterval);
+
                 localState.currentRoomId = state.roomId;
                 for (const index in state.players) {
                     if (state.players[index].nickname === localState.nickname) {
@@ -183,18 +193,41 @@
                 }
                 document.getElementById('round-info').textContent = `Раунд ${state.round}/${state.totalRounds}`;
                 document.getElementById('club-name-display').textContent = state.clubName;
+                
+                // Обновляем инфо игроков
                 for (let i = 0; i < 2; i++) {
                     const playerInfoEl = document.getElementById(`player-${i}-info`);
                     if (state.players[i]) {
                         playerInfoEl.style.display = 'block';
                         playerInfoEl.querySelector('.nickname').textContent = state.players[i].nickname;
                         playerInfoEl.querySelector('.score').textContent = state.scores[i] || 0;
-                        playerInfoEl.querySelector('.time-bank').textContent = `${(state.timeBanks[i] || 0).toFixed(1)}с`;
+                        
+                        const timeBankEl = playerInfoEl.querySelector('.time-bank');
+                        let timeLeft = state.timeBanks[i] || 0;
+                        timeBankEl.textContent = `${timeLeft.toFixed(1)}с`;
+
                         playerInfoEl.classList.toggle('active', i === state.currentPlayerIndex);
+
+                        // --- ЛОГИКА ТАЙМЕРА ---
+                        // Если это текущий игрок, запускаем визуальный таймер
+                        if (i === state.currentPlayerIndex) {
+                            gameTimerInterval = setInterval(() => {
+                                timeLeft -= 0.1;
+                                if (timeLeft < 0) timeLeft = 0;
+                                timeBankEl.textContent = `${timeLeft.toFixed(1)}с`;
+                                if (timeLeft <= 0) {
+                                    clearInterval(gameTimerInterval);
+                                }
+                            }, 100);
+                        }
+                        // --- КОНЕЦ ЛОГИКИ ТАЙМЕРА ---
+
                     } else {
                         playerInfoEl.style.display = 'none';
                     }
                 }
+                
+                // Обновляем список названных игроков
                 const namedPlayersList = document.getElementById('named-players-list');
                 namedPlayersList.innerHTML = '';
                 state.namedPlayers.forEach(p => {
@@ -202,15 +235,23 @@
                     li.textContent = `${p.full_name} (${state.players[p.by].nickname})`;
                     namedPlayersList.appendChild(li);
                 });
+                
+                // Обновляем инпуты
                 const myTurn = state.currentPlayerIndex === localState.myPlayerIndex;
                 const guessInput = document.getElementById('guess-input');
                 guessInput.disabled = !myTurn;
                 document.getElementById('submit-guess-btn').disabled = !myTurn;
                 document.getElementById('surrender-btn').disabled = !myTurn;
+                
                 if(myTurn) guessInput.focus();
+                
+                // Очищаем поле сообщения
+                document.getElementById('guess-result-msg').textContent = '';
             }
+            // --- КОНЕЦ ИСПРАВЛЕННОЙ ФУНКЦИИ ---
 
             socket.on('game_over', (data) => {
+                if (gameTimerInterval) clearInterval(gameTimerInterval); // <-- ИСПРАВЛЕНИЕ 3
                 let message = `Игра окончена!\nСчет: ${data.final_scores[0]} - ${data.final_scores[1] || 0}\n\n`;
                 if(data.rating_changes && data.players[localState.myPlayerIndex]) {
                     const myChangesKey = localState.myPlayerIndex === 0 ? 'p1' : 'p2';
@@ -221,6 +262,34 @@
                 alert(message);
                 showScreen('lobby');
             });
+
+            // --- ИСПРАВЛЕНИЕ 4: НЕДОСТАЮЩИЕ ОБРАБОТЧИКИ ---
+            // Обработчик, который мы пропустили: обновляет UI после каждого хода
+            socket.on('turn_updated', (state) => {
+                console.log("Turn updated, redrawing UI");
+                updateGameUI(state);
+            });
+
+            // Обработчик, который мы пропустили: показывает результат догадки
+            socket.on('guess_result', (data) => {
+                const msgEl = document.getElementById('guess-result-msg');
+                if (data.result === 'correct') {
+                    msgEl.textContent = `✅ Верно!`;
+                    msgEl.style.color = 'var(--correct-color)';
+                } else if (data.result === 'correct_typo') {
+                    msgEl.textContent = `✅ Верно (исправлено): ${data.corrected_name}`;
+                    msgEl.style.color = 'var(--correct-color)';
+                } else if (data.result === 'already_named') {
+                    msgEl.textContent = 'Этот игрок уже был назван!';
+                    msgEl.style.color = 'var(--incorrect-color)';
+                } else if (data.result === 'not_found') {
+                    msgEl.textContent = '❌ Неверно';
+                    msgEl.style.color = 'var(--incorrect-color)';
+                }
+                // Очищаем сообщение через 2 секунды
+                setTimeout(() => { msgEl.textContent = ''; }, 2000);
+            });
+            // --- КОНЕЦ НЕДОСТАЮЩИХ ОБРАБОТЧИКОВ ---
             
             // --- Остальная часть JS-кода (настройки, таблица лидеров и т.д.) остается без изменений ---
             // Код для кнопок, инпутов и т.д.
@@ -233,6 +302,9 @@
             document.getElementById('create-game-btn').addEventListener('click', () => openSettings(false));
             document.getElementById('start-training-btn').addEventListener('click', () => openSettings(true));
             document.getElementById('back-to-lobby-btn').addEventListener('click', () => showScreen('lobby'));
+            document.getElementById('surrender-btn').addEventListener('click', () => {
+                socket.emit('surrender_round', { roomId: localState.currentRoomId });
+            });
 
             function openSettings(isTraining) {
                 document.getElementById('confirm-training-btn').style.display = isTraining ? 'block' : 'none';
@@ -282,6 +354,10 @@
                     openGamesList.innerHTML += `<div class="game-card"><div class="game-card-info"><p><strong>${game.creator_nickname}</strong> (${game.creator_rating})</p><p style="font-size:12px;">${clubsText}</p></div><button class="join-btn" data-creator-sid="${game.creator_sid}">Войти</button></div>`;
                 });
             });
+            
+            socket.on('lobby_stats_update', (stats) => {
+                document.getElementById('lobby-stats').textContent = `В лобби: ${stats.players_in_lobby} | В игре: ${stats.players_in_game}`;
+            });
 
             const submitGuessBtn = document.getElementById('submit-guess-btn');
             const guessInput = document.getElementById('guess-input');
@@ -305,6 +381,11 @@
                 data.forEach((user, index) => {
                     tableBody.innerHTML += `<tr><td>${index + 1}</td><td>${user.nickname}</td><td>${user.rating}</td><td>${user.games_played}</td></tr>`;
                 });
+            });
+            
+            socket.on('opponent_disconnected', (data) => {
+                alert(data.message || 'Соперник отключился.');
+                showScreen('lobby');
             });
         });
     </script>
