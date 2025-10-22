@@ -202,8 +202,9 @@
             const namedPlayersList0 = document.getElementById('named-players-list-0');
             const namedPlayersList1 = document.getElementById('named-players-list-1');
             const lobbyStatsEl = document.getElementById('lobby-stats');
-            // --- ИЗМЕНЕНИЕ: Нашли элемент для уведомлений ---
             const guessResultMsg = document.getElementById('guess-result-msg');
+            // --- ИЗМЕНЕНИЕ: Находим инпут тайм-банка ---
+            const timeBankInput = document.getElementById('time-bank-input');
 
             summaryListContainer.addEventListener('scroll', () => { const w = summaryListContainer.parentElement; w.classList.toggle('scrolled-to-bottom', summaryListContainer.scrollHeight - summaryListContainer.scrollTop <= summaryListContainer.clientHeight + 1); });
             gameOverBackBtn.addEventListener('click', () => showScreen('lobby'));
@@ -223,7 +224,7 @@
                 if (data.success) {
                     localState.nickname = data.nickname;
                     document.getElementById('welcome-message').textContent = `Добро пожаловать, ${localState.nickname}!`;
-                    socket.emit('get_lobby_data'); // Запрос данных при входе
+                    socket.emit('get_lobby_data'); 
                     showScreen('lobby');
                 } else { document.getElementById('nickname-error').textContent = data.message || 'Ошибка.'; }
             });
@@ -252,11 +253,11 @@
 
                 const buttonText = localState.isLastRound ? 'К итогам игры' : 'Следующий раунд';
                 skipPauseBtn.textContent = buttonText;
-                skipPauseBtn.disabled = false; // --- ИЗМЕНЕНИЕ: Сбрасываем кнопку при новом раунде
+                skipPauseBtn.disabled = false; 
 
                 showScreen('summary');
 
-                const endTime = data.pauseEndTime * 1000; // Используем время с сервера
+                const endTime = data.pauseEndTime * 1000; 
                 function updateCountdown() {
                     const now = Date.now();
                     const timeLeft = Math.max(0, Math.ceil((endTime - now) / 1000));
@@ -267,23 +268,18 @@
                 summaryTimerInterval = setInterval(updateCountdown, 1000);
             });
 
-            // --- ИЗМЕНЕНИЕ: Логика кнопки "Пропустить" ---
             skipPauseBtn.addEventListener('click', () => {
                 if (summaryTimerInterval) { clearInterval(summaryTimerInterval); summaryTimerInterval = null; }
-                // Не блокируем кнопку сразу, ждем ответа от сервера
                 socket.emit('request_skip_pause', { roomId: localState.currentRoomId });
             });
 
-            // --- ИЗМЕНЕНИЕ: Новый обработчик подтверждения голоса ---
             socket.on('skip_vote_accepted', () => {
-                // Сервер подтвердил получение голоса, теперь блокируем кнопку
                 skipPauseBtn.disabled = true;
                 skipPauseBtn.textContent = 'Голос принят...';
             });
 
             socket.on('skip_vote_update', (data) => {
                 const baseButtonText = localState.isLastRound ? 'К итогам игры' : 'Следующий раунд';
-                // Обновляем текст (кнопка уже должна быть заблокирована, если мы голосовали)
                 skipPauseBtn.textContent = `${baseButtonText} (${data.count}/2)`;
             });
 
@@ -354,16 +350,14 @@
 
                 // Названные игроки
                 namedPlayersList0.innerHTML = ''; namedPlayersList1.innerHTML = '';
-                // Проходим в обратном порядке для добавления сверху
                 for(let i = state.namedPlayers.length - 1; i >= 0; i--) {
                     const p = state.namedPlayers[i]; const li = document.createElement('li');
-                    li.textContent = p.full_name; // Отображаем только имя
-                    if (p.by === displayPlayer0ActualIndex) namedPlayersList0.prepend(li); // Добавляем в начало левой
-                    else if (p.by === displayPlayer1ActualIndex) namedPlayersList1.prepend(li); // Добавляем в начало правой
+                    li.textContent = p.full_name; 
+                    if (p.by === displayPlayer0ActualIndex) namedPlayersList0.prepend(li); 
+                    else if (p.by === displayPlayer1ActualIndex) namedPlayersList1.prepend(li); 
                 }
                 namedPlayersContainer.style.display = (namedPlayersList0.children.length > 0 || namedPlayersList1.children.length > 0) ? 'flex' : 'none';
 
-                // Инпут и кнопки (управляются флагом isSpectating)
                 const guessInput = document.getElementById('guess-input');
                 const isMyActualTurn = state.currentPlayerIndex === localState.myPlayerIndex;
                 if (!localState.isSpectating) {
@@ -372,7 +366,6 @@
                     document.getElementById('submit-guess-btn').disabled = !isMyActualTurn;
                     document.getElementById('surrender-btn').disabled = !isMyActualTurn;
                 }
-                // --- ИЗМЕНЕНИЕ: Очищаем сообщение об ответе при обновлении хода ---
                 if (guessResultMsg) {
                     guessResultMsg.textContent = '';
                 }
@@ -380,17 +373,16 @@
 
             function getRoundOutcomeText(round, p0_nick, p1_nick) {
                 const reason = round.result_type;
-                const winnerIndex = round.winner_index; // 0, 1 или 'draw'
+                const winnerIndex = round.winner_index; 
 
                 if (reason === 'completed' || winnerIndex === 'draw') {
                     return 'Ничья (все названы)';
-                } else if (winnerIndex === 0 || winnerIndex === 1) { // Если есть победитель (PvP или Solo)
+                } else if (winnerIndex === 0 || winnerIndex === 1) { 
                     const winnerNick = (winnerIndex === 0) ? p0_nick : p1_nick;
                     let reasonText = '';
                     if (reason === 'surrender') { reasonText = '(соперник сдался)'; }
                     else if (reason === 'timeout') { reasonText = '(время вышло)'; }
 
-                    // Для соло показываем только причину
                     if (!p1_nick) {
                          if (reason === 'surrender') return 'Сдался';
                          if (reason === 'timeout') return 'Время вышло';
@@ -416,10 +408,8 @@
                 const opponentFinalScore = (opponentOriginalIndex !== -1) ? (data.final_scores[opponentOriginalIndex] || 0) : 0;
                 document.getElementById('game-over-score').textContent = `Счет ${myFinalScore} - ${opponentFinalScore}`;
                 
-                // --- ИЗМЕНЕНИЕ: Убран вызов getEndReasonText ---
                 const endReasonText = { 'normal': 'Игра завершена по кол-ву раундов.', 'unreachable_score': 'Счет стал недосягаемым.' };
                 document.getElementById('game-over-reason').textContent = endReasonText[data.end_reason] || 'Игра завершена.';
-                // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
                 let ratingText = '';
                 if (data.mode === 'solo') { ratingText = 'Рейтинг в тренировке не меняется.'; }
@@ -443,9 +433,7 @@
 
             socket.on('turn_updated', (state) => { updateGameUI(state); });
 
-            // --- ИЗМЕНЕНИЕ: Восстановлена логика уведомлений ---
             socket.on('guess_result', (data) => {
-                // Больше нет проверки !localState.isSpectating
                 let msg = '';
                 let color = 'var(--text-color)';
 
@@ -468,7 +456,6 @@
                     guessResultMsg.style.color = color;
                 }
 
-                // Очищаем сообщение о *неправильном* ответе через 2 секунды
                 if (data.result === 'already_named' || data.result === 'not_found') {
                     setTimeout(() => {
                         if (guessResultMsg && guessResultMsg.textContent === msg) {
@@ -476,9 +463,7 @@
                         }
                     }, 2000);
                 }
-                // Сообщение о *правильном* ответе будет очищено следующим 'turn_updated'
             });
-            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
             socket.on('spectator_update', (data) => { spectatorInfo.textContent = data.text || ''; });
 
@@ -512,23 +497,84 @@
 
             randomClubsSlider.addEventListener('input', () => { randomClubsLabel.textContent = `Кол-во клубов: ${randomClubsSlider.value}`; validateSettings(); });
             clubsSelectionList.addEventListener('change', (e) => { if (e.target.type === 'checkbox') validateSettings(); });
+            
+            // --- ИЗМЕНЕНИЕ: Добавляем слушатель на инпут тайм-банка ---
+            timeBankInput.addEventListener('input', validateSettings);
 
+            // --- ИЗМЕНЕНИЕ: Обновленная функция валидации ---
             function validateSettings() {
-                const minClubs = localState.isTraining ? 1 : 3; const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
-                let isValid = false; let error = "";
-                if (activeTab === 'random') { const count = parseInt(randomClubsSlider.value, 10); if (count < minClubs) error = `Мин ${minClubs} ${minClubs === 1 ? 'клуб' : 'клуба'}.`; else isValid = true; }
-                else if (activeTab === 'manual') { const checkedCount = document.querySelectorAll('#clubs-selection-list input:checked').length; manualClubsCount.textContent = `Выбрано: ${checkedCount}`; if (checkedCount < minClubs) error = `Мин ${minClubs} ${minClubs === 1 ? 'клуб' : 'клуба'} (${checkedCount}).`; else isValid = true; }
-                settingsErrorMsg.textContent = error; confirmCreateBtn.disabled = !isValid; confirmTrainingBtn.disabled = !isValid;
+                const timeBankValue = parseFloat(timeBankInput.value);
+                const minTime = 30; // Берем из HTML min="30"
+                const maxTime = 300; // Берем из HTML max="300"
+
+                const minClubs = localState.isTraining ? 1 : 3; 
+                const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
+                
+                let isValid = false; 
+                let error = "";
+
+                // 1. Сначала проверяем Тайм-банк
+                if (isNaN(timeBankValue) || timeBankValue < minTime || timeBankValue > maxTime) {
+                    error = `Тайм-банк: ${minTime}-${maxTime} сек.`;
+                    isValid = false; // Кнопка будет выключена
+                } 
+                // 2. Если тайм-банк в порядке, проверяем клубы
+                else {
+                    if (activeTab === 'random') {
+                        const count = parseInt(randomClubsSlider.value, 10);
+                        if (count < minClubs) {
+                            error = `Мин ${minClubs} ${minClubs === 1 ? 'клуб' : 'клуба'}.`;
+                        } else {
+                            isValid = true; // Все проверки пройдены
+                        }
+                    } else if (activeTab === 'manual') {
+                        const checkedCount = document.querySelectorAll('#clubs-selection-list input:checked').length;
+                        manualClubsCount.textContent = `Выбрано: ${checkedCount}`;
+                        if (checkedCount < minClubs) {
+                            error = `Мин ${minClubs} ${minClubs === 1 ? 'клуб' : 'клуба'} (${checkedCount}).`;
+                        } else {
+                            isValid = true; // Все проверки пройдены
+                        }
+                    }
+                }
+                
+                settingsErrorMsg.textContent = error;
+                confirmCreateBtn.disabled = !isValid;
+                confirmTrainingBtn.disabled = !isValid;
             }
+            // --- КОНЕЦ ИЗМЕНЕНИЙ ---
 
             function handleCreateGame(isTraining) {
                 const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
-                let settings = { league: document.getElementById('league-select').value, time_bank: parseFloat(document.getElementById('time-bank-input').value), num_rounds: 0, selected_clubs: [] };
-                if (activeTab === 'random') settings.num_rounds = parseInt(randomClubsSlider.value, 10); else if (activeTab === 'manual') settings.selected_clubs = Array.from(document.querySelectorAll('#clubs-selection-list input:checked')).map(cb => cb.value);
-                if (isTraining) socket.emit('start_game', { mode: 'solo', nickname: localState.nickname, settings: settings }); else { socket.emit('create_game', { nickname: localState.nickname, settings: settings }); showScreen('lobby'); }
+                let settings = { 
+                    league: document.getElementById('league-select').value, 
+                    time_bank: parseFloat(timeBankInput.value), // Отправляем значение
+                    num_rounds: 0, 
+                    selected_clubs: [] 
+                };
+                if (activeTab === 'random') settings.num_rounds = parseInt(randomClubsSlider.value, 10); 
+                else if (activeTab === 'manual') settings.selected_clubs = Array.from(document.querySelectorAll('#clubs-selection-list input:checked')).map(cb => cb.value);
+                
+                if (isTraining) {
+                    socket.emit('start_game', { mode: 'solo', nickname: localState.nickname, settings: settings }); 
+                } else { 
+                    socket.emit('create_game', { nickname: localState.nickname, settings: settings }); 
+                    showScreen('lobby'); 
+                }
             }
             confirmCreateBtn.addEventListener('click', () => handleCreateGame(false));
             confirmTrainingBtn.addEventListener('click', () => handleCreateGame(true));
+            
+            // --- ИЗМЕНЕНИЕ: Обработка ошибок создания игры ---
+            socket.on('create_game_fail', (data) => {
+                alert(`Не удалось создать игру: ${data.message}`);
+            });
+            socket.on('start_game_fail', (data) => {
+                alert(`Не удалось начать тренировку: ${data.message}`);
+                showScreen('lobby'); // Возвращаем в лобби, если не удалось
+            });
+            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
 
             document.getElementById('lobby-screen').addEventListener('click', (e) => {
                 if (e.target.classList.contains('join-btn')) socket.emit('join_game', { creator_sid: e.target.getAttribute('data-creator-sid'), nickname: localState.nickname });
@@ -562,7 +608,7 @@
                  `;
             });
 
-            socket.on('spectate_success', (data) => { localState.isSpectating = true; localState.currentRoomId = data.roomId; /* showScreen('game') вызовется в round_started */ });
+            socket.on('spectate_success', (data) => { localState.isSpectating = true; localState.currentRoomId = data.roomId; });
             socket.on('spectate_fail', (data) => { alert(`Ошибка: ${data.message}`); });
 
             const submitGuessBtn = document.getElementById('submit-guess-btn');

@@ -25,6 +25,10 @@ if not TELEGRAM_BOT_TOKEN:
 # Константы
 PAUSE_BETWEEN_ROUNDS = 10
 TYPO_THRESHOLD = 85
+# --- ИЗМЕНЕНИЕ: Добавлены константы валидации ---
+MIN_TIME_BANK = 30.0
+MAX_TIME_BANK = 300.0
+# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 # Настройка Flask, SQLAlchemy
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -175,8 +179,23 @@ class GameState:
         self.all_clubs_data = all_leagues.get(league, {})
         if not self.all_clubs_data: print(f"[WARNING] Данные для лиги '{league}' не найдены!")
         max_clubs_in_league = len(self.all_clubs_data)
-        default_settings = {'num_rounds': max_clubs_in_league, 'time_bank': 90.0, 'league': league}
-        self.settings = settings or default_settings
+        
+        # --- ИЗМЕНЕНИЕ: Валидация Time Bank внутри GameState ---
+        default_time = 90.0
+        try:
+            # Валидация (MIN/MAX) происходит на уровне socket, здесь просто приводим тип
+            time_bank_setting = float(temp_settings.get('time_bank', default_time))
+        except (ValueError, TypeError):
+            time_bank_setting = default_time
+        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
+        default_settings = {'num_rounds': max_clubs_in_league, 'time_bank': time_bank_setting, 'league': league}
+        
+        self.settings = default_settings
+        if settings:
+            self.settings.update(settings)
+        self.settings['time_bank'] = time_bank_setting # Гарантируем, что в settings лежит валидное значение
+
         selected_clubs = self.settings.get('selected_clubs')
         num_rounds_setting = self.settings.get('num_rounds', 0)
         available_clubs_keys = list(self.all_clubs_data.keys())
@@ -203,9 +222,9 @@ class GameState:
         self.named_players_full_names, self.named_players = set(), []
         self.round_history, self.end_reason = [], 'normal'
         self.last_successful_guesser_index, self.previous_round_loser_index = None, None
-        time_bank_setting = self.settings.get('time_bank', 90.0)
-        self.time_banks = {0: time_bank_setting}
-        if self.mode != 'solo': self.time_banks[1] = time_bank_setting
+        
+        self.time_banks = {0: self.settings['time_bank']}
+        if self.mode != 'solo': self.time_banks[1] = self.settings['time_bank']
         self.turn_start_time = 0
 
     def start_new_round(self):
@@ -218,9 +237,11 @@ class GameState:
             else: self.current_player_index = self.current_round % 2
         else: self.current_player_index = 0
         self.previous_round_loser_index = None
-        time_bank_setting = self.settings.get('time_bank', 90.0)
+        
+        time_bank_setting = self.settings.get('time_bank', 90.0) 
         self.time_banks = {0: time_bank_setting}
         if self.mode != 'solo': self.time_banks[1] = time_bank_setting
+
         if self.current_round < len(self.game_clubs):
             self.current_club_name = self.game_clubs[self.current_round]
             player_objects = self.all_clubs_data.get(self.current_club_name, [])
@@ -256,25 +277,18 @@ class GameState:
     def is_round_over(self):
         return len(self.players_for_comparison) > 0 and len(self.named_players) == len(self.players_for_comparison)
 
-    # --- ИСПРАВЛЕНИЕ: Отступы и разделение строк ---
     def is_game_over(self):
         """Проверяет, завершена ли игра."""
-        # Проверка на максимальное количество раундов
         if self.current_round >= (self.num_rounds - 1):
             self.end_reason = 'normal'
             return True
-
-        # Проверка на недосягаемый счет в PvP
         if len(self.players) > 1:
             score_diff = abs(self.scores[0] - self.scores[1])
             rounds_left = self.num_rounds - (self.current_round + 1)
             if score_diff > rounds_left:
                 self.end_reason = 'unreachable_score'
                 return True
-
-        # Если ни одно из условий не выполнено
         return False
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 def get_game_state_for_client(game_session, room_id):
     game = game_session['game']
@@ -386,10 +400,8 @@ def start_game_loop(room_id):
         socketio.emit('game_over', game_over_data, room=room_id)
         socketio.close_room(room_id)
         print(f"[GAME_OVER] {room_id}: Комната закрыта.")
-        # --- ИЗМЕНЕНИЕ: Обновляем лобби ---
         broadcast_lobby_stats()
         emit_lobby_update()
-        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
         return
 
     print(f"[ROUND_START] {room_id}: Раунд {game.current_round + 1}/{game.num_rounds}. Клуб: {game.current_club_name}.")
@@ -467,7 +479,6 @@ def handle_disconnect():
         emit_lobby_update()
     player_game_id, opponent_sid, game_session_player, disconnected_player_index = None, None, None, -1
     
-    # --- НАЧАЛО ИСПРАВЛЕНИЯ ОШИБКИ INDENTATIONERROR ---
     for room_id, game_session in list(active_games.items()):
         game = game_session['game']
         idx = next((i for i, p in game.players.items() if p.get('sid') == sid), -1)
@@ -480,7 +491,6 @@ def handle_disconnect():
                 if game.players[opponent_index].get('sid') and game.players[opponent_index]['sid'] != 'BOT':
                     opponent_sid = game.players[opponent_index]['sid']
             break
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ОШИБКИ INDENTATIONERROR ---
 
     if player_game_id and game_session_player:
         game = game_session_player['game']
@@ -625,7 +635,7 @@ def handle_request_skip_pause(data):
         player_index = next((i for i, p in game.players.items() if p.get('sid') == sid), -1)
         if player_index != -1 and game_session.get('pause_id'):
             game_session['skip_votes'].add(player_index)
-            emit('skip_vote_accepted')
+            emit('skip_vote_accepted') # --- ИЗМЕНЕНИЕ: Отправляем подтверждение
             socketio.emit('skip_vote_update', {'count': len(game_session['skip_votes'])}, room=room_id)
             print(f"[GAME] {room_id}: Skip vote by {game.players[player_index]['nickname']} ({len(game_session['skip_votes'])}/{len(game.players)}).")
             if len(game_session['skip_votes']) >= len(game.players):
@@ -657,6 +667,19 @@ def handle_start_game(data):
         print(f"[SECURITY] {nick} ({sid}) busy, start rejected.")
         return
     if mode == 'solo':
+        # --- ИЗМЕНЕНИЕ: Валидация Time Bank ---
+        try:
+            time_bank = float(settings.get('time_bank', 90.0))
+            if not (MIN_TIME_BANK <= time_bank <= MAX_TIME_BANK):
+                print(f"[ERROR] {nick} ({sid}) invalid time bank (solo): {time_bank}.")
+                emit('start_game_fail', {'message': f'Время: {MIN_TIME_BANK}-{MAX_TIME_BANK} сек.'})
+                return
+            settings['time_bank'] = time_bank # Сохраняем float
+        except (ValueError, TypeError):
+            emit('start_game_fail', {'message': 'Неверный формат времени.'})
+            return
+        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
         p1_info = {'sid': sid, 'nickname': nick}
         room_id = str(uuid.uuid4())
         join_room(room_id)
@@ -672,7 +695,7 @@ def handle_start_game(data):
             remove_player_from_lobby(sid)
             broadcast_lobby_stats()
             emit_lobby_update()
-            print(f"[GAME] {nick} started training. Room: {room_id}. Clubs: {game.num_rounds}")
+            print(f"[GAME] {nick} started training. Room: {room_id}. Clubs: {game.num_rounds}, TB: {game.settings['time_bank']}")
             start_game_loop(room_id)
         except Exception as e:
             print(f"[ERROR] Create solo {nick}: {e}")
@@ -695,6 +718,20 @@ def handle_create_game(data):
     if is_player_busy(sid):
         print(f"[SECURITY] {nick} ({sid}) busy, create rejected.")
         return
+        
+    # --- ИЗМЕНЕНИЕ: Валидация Time Bank ---
+    try:
+        time_bank = float(settings.get('time_bank', 90.0))
+        if not (MIN_TIME_BANK <= time_bank <= MAX_TIME_BANK):
+            print(f"[ERROR] {nick} ({sid}) invalid time bank (pvp): {time_bank}.")
+            emit('create_game_fail', {'message': f'Время: {MIN_TIME_BANK}-{MAX_TIME_BANK} сек.'})
+            return
+        settings['time_bank'] = time_bank # Сохраняем float
+    except (ValueError, TypeError):
+        emit('create_game_fail', {'message': 'Неверный формат времени.'})
+        return
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
     try:
         temp_game = GameState({'nickname': nick}, all_leagues_data, mode='pvp', settings=settings)
     except Exception as e:
@@ -756,7 +793,7 @@ def handle_join_game(data):
         active_games[room_id] = {'game': game, 'turn_id': None, 'pause_id': None, 'skip_votes': set(), 'last_round_end_reason': None, 'spectators': []}
         broadcast_lobby_stats()
         emit_lobby_update()
-        print(f"[GAME] Start PvP: {p1_info['nickname']} vs {p2_info['nickname']}. Room: {room_id}. Clubs: {game.num_rounds}")
+        print(f"[GAME] Start PvP: {p1_info['nickname']} vs {p2_info['nickname']}. Room: {room_id}. Clubs: {game.num_rounds}, TB: {game.settings['time_bank']}")
         start_game_loop(room_id)
     except Exception as e:
          print(f"[ERROR] Create PvP {room_id}: {e}")
