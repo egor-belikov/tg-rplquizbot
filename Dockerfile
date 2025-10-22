@@ -20,4 +20,4 @@ COPY . .
 
 # --- ИСПРАВЛЕНИЕ 1 ---
 # Используем 'python -m gunicorn' для надежного запуска
-CMD ["python", "-m", "gunicorn", "--worker-class", "eventlet", "-w", "1", "--bind", "0.0.0.0:8080", "server:app"]
+CMD ["python", "-m", "gunicorn", "--worker-class", "eventlet", "-w", "1", "--bind", "0.0.0.0:8000", "server:app"]
