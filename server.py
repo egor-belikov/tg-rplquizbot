@@ -33,7 +33,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*")
 
-# --- ИЗМЕНЕНИЕ: Модель Базы Данных ---
+# --- Модель Базы Данных ---
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     telegram_id = db.Column(db.BigInteger, unique=True, nullable=False)
@@ -41,7 +41,6 @@ class User(db.Model):
     rating = db.Column(db.Float, default=1500)
     rd = db.Column(db.Float, default=350)
     vol = db.Column(db.Float, default=0.06)
-    # НОВОЕ ПОЛЕ: Счётчик сыгранных матчей
     games_played = db.Column(db.Integer, default=0, nullable=False)
 
 with app.app_context():
@@ -103,27 +102,33 @@ def load_league_data(filename, league_name):
 all_leagues_data = {}
 all_leagues_data.update(load_league_data('players.csv', 'РПЛ'))
 
-# --- НОВЫЕ ФУНКЦИИ: Рейтинги и Таблица Лидеров ---
-def update_ratings(winner_user_obj, loser_user_obj):
-    """Обновляет Glicko-2 рейтинги двух игроков и сохраняет в БД."""
+# --- ИСПРАВЛЕНИЕ: ПЕРЕРАБОТАННАЯ ФУНКЦИЯ ОБНОВЛЕНИЯ РЕЙТИНГА ---
+def update_ratings(p1_user_obj, p2_user_obj, p1_outcome):
+    """
+    Обновляет Glicko-2 рейтинги двух игроков и сохраняет в БД.
+    p1_outcome: 1 (p1 победил), 0 (p1 проиграл), 0.5 (ничья)
+    """
     with app.app_context():
-        winner = Player(rating=winner_user_obj.rating, rd=winner_user_obj.rd, vol=winner_user_obj.vol)
-        loser = Player(rating=loser_user_obj.rating, rd=loser_user_obj.rd, vol=loser_user_obj.vol)
+        p1 = Player(rating=p1_user_obj.rating, rd=p1_user_obj.rd, vol=p1_user_obj.vol)
+        p2 = Player(rating=p2_user_obj.rating, rd=p2_user_obj.rd, vol=p2_user_obj.vol)
 
-        winner.update_player([loser.rating], [loser.rd], [1])
-        loser.update_player([winner.rating], [winner.rd], [0])
+        p2_outcome = 1 - p1_outcome
+
+        p1.update_player([p2.rating], [p2.rd], [p1_outcome])
+        p2.update_player([p1.rating], [p1.rd], [p2_outcome])
 
         # Обновляем данные в объектах SQLAlchemy
-        winner_user_obj.rating = winner.rating
-        winner_user_obj.rd = winner.rd
-        winner_user_obj.vol = winner.vol
+        p1_user_obj.rating = p1.rating
+        p1_user_obj.rd = p1.rd
+        p1_user_obj.vol = p1.vol
         
-        loser_user_obj.rating = loser.rating
-        loser_user_obj.rd = loser.rd
-        loser_user_obj.vol = loser.vol
+        p2_user_obj.rating = p2.rating
+        p2_user_obj.rd = p2.rd
+        p2_user_obj.vol = p2.vol
 
         db.session.commit()
-        print(f"[RATING] Рейтинги обновлены: {winner_user_obj.nickname} vs {loser_user_obj.nickname}")
+        print(f"[RATING] Рейтинги обновлены. {p1_user_obj.nickname} ({p1_outcome}) vs {p2_user_obj.nickname} ({p2_outcome})")
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 def get_leaderboard_data():
     """Собирает данные для таблицы лидеров, включая количество игр."""
@@ -133,7 +138,7 @@ def get_leaderboard_data():
             {
                 'nickname': user.nickname,
                 'rating': int(user.rating),
-                'games_played': user.games_played  # Добавляем новое поле
+                'games_played': user.games_played
             }
             for user in users
         ]
@@ -155,13 +160,22 @@ class GameState:
         self.settings = settings or default_settings
         
         selected_clubs = self.settings.get('selected_clubs')
+        num_rounds_setting = self.settings.get('num_rounds', 0)
+
         if selected_clubs and len(selected_clubs) > 0:
+            # Режим "Выбрать вручную"
             self.game_clubs = random.sample(selected_clubs, len(selected_clubs))
             self.num_rounds = len(self.game_clubs)
-        else:
-            self.num_rounds = self.settings.get('num_rounds', max_clubs_in_league)
+        elif num_rounds_setting > 0:
+            # Режим "Случайные клубы"
+            self.num_rounds = min(num_rounds_setting, max_clubs_in_league)
             available_clubs = list(self.all_clubs_data.keys())
-            self.game_clubs = random.sample(available_clubs, min(self.num_rounds, len(available_clubs)))
+            self.game_clubs = random.sample(available_clubs, self.num_rounds)
+        else:
+            # Фолбэк (старая логика)
+            self.num_rounds = max_clubs_in_league
+            available_clubs = list(self.all_clubs_data.keys())
+            self.game_clubs = random.sample(available_clubs, self.num_rounds)
 
         self.current_round = -1
         self.current_player_index, self.current_club_name = 0, None
@@ -223,7 +237,8 @@ class GameState:
 
     def is_round_over(self): return len(self.named_players) == len(self.players_for_comparison)
     def is_game_over(self):
-        if self.current_round >= self.num_rounds - 1: self.end_reason = 'normal'; return True
+        # Исправлено: +1, т.к. current_round начинается с -1
+        if (self.current_round + 1) >= self.num_rounds: self.end_reason = 'normal'; return True
         if len(self.players) > 1:
             score_diff = abs(self.scores[0] - self.scores[1])
             rounds_left = self.num_rounds - (self.current_round + 1)
@@ -260,7 +275,6 @@ def turn_watcher(room_id, turn_id, time_limit):
     game_session = active_games.get(room_id)
     if game_session and game_session.get('turn_id') == turn_id: on_timer_end(room_id)
 
-# --- ИСПРАВЛЕННАЯ ФУНКЦИЯ ---
 def on_timer_end(room_id):
     game_session = active_games.get(room_id)
     if not game_session: return
@@ -276,16 +290,11 @@ def on_timer_end(room_id):
         game.scores[winner_index] += 1
         game.previous_round_loser_index = loser_index
     
-    # --- ИЗМЕНЕНИЕ ---
-    # Устанавливаем причину 'timeout', только если она не была 
-    # установлена ранее (например, как 'surrender' в handle_surrender)
     if not game_session.get('last_round_end_reason'):
         game_session['last_round_end_reason'] = 'timeout'
-    # --- Конец изменения ---
         
     game_session['last_round_end_player_nickname'] = game.players[loser_index]['nickname']
     show_round_summary_and_schedule_next(room_id)
-# --- КОНЕЦ ИСПРАВЛЕННОЙ ФУНКЦИИ ---
 
 def start_game_loop(room_id):
     game_session = active_games.get(room_id)
@@ -306,17 +315,25 @@ def start_game_loop(room_id):
             if not p1_obj or not p2_obj:
                 print(f"[ERROR] Не удалось найти одного из игроков в БД в конце игры {room_id}. Рейтинги не будут обновлены.")
             else:
-                # --- ИЗМЕНЕНИЕ: Увеличиваем счётчик сыгранных игр ---
                 with app.app_context():
                     p1_obj.games_played += 1
                     p2_obj.games_played += 1
                     db.session.commit()
                     print(f"[STATS] Игрокам {p1_obj.nickname} и {p2_obj.nickname} засчитана игра.")
-                # --- Конец изменения ---
 
                 p1_old_rating, p2_old_rating = int(p1_obj.rating), int(p2_obj.rating)
-                if game.scores[0] > game.scores[1]: update_ratings(winner_user_obj=p1_obj, loser_user_obj=p2_obj)
-                elif game.scores[1] > game.scores[0]: update_ratings(winner_user_obj=p2_obj, loser_user_obj=p1_obj)
+                
+                # --- ИСПРАВЛЕНИЕ: ЛОГИКА ОБНОВЛЕНИЯ РЕЙТИНГА С УЧЕТОМ НИЧЬИ ---
+                if game.scores[0] > game.scores[1]:
+                    # P1 (0) победил
+                    update_ratings(p1_user_obj=p1_obj, p2_user_obj=p2_obj, p1_outcome=1)
+                elif game.scores[1] > game.scores[0]:
+                    # P2 (1) победил
+                    update_ratings(p1_user_obj=p1_obj, p2_user_obj=p2_obj, p1_outcome=0)
+                else:
+                    # Ничья
+                    update_ratings(p1_user_obj=p1_obj, p2_user_obj=p2_obj, p1_outcome=0.5)
+                # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
                 with app.app_context():
                     updated_p1, updated_p2 = User.query.get(p1_obj.id), User.query.get(p2_obj.id)
@@ -367,7 +384,13 @@ def get_lobby_data_list():
             if creator_user:
                 settings_with_clubs = game_info['settings']
                 selected_clubs = settings_with_clubs.get('selected_clubs', [])
-                lobby_list.append({ 'settings': settings_with_clubs, 'creator_nickname': creator_user.nickname, 'creator_rating': int(creator_user.rating), 'creator_sid': game_info['creator']['sid'], 'selected_clubs_names': selected_clubs })
+                lobby_list.append({ 
+                    'settings': settings_with_clubs, 
+                    'creator_nickname': creator_user.nickname, 
+                    'creator_rating': int(creator_user.rating), 
+                    'creator_sid': game_info['creator']['sid'], 
+                    'selected_clubs_names': selected_clubs 
+                })
     return lobby_list
 
 # --- Обработчики событий Socket.IO ---
@@ -585,9 +608,12 @@ def handle_surrender(data):
 def index(): 
     return render_template('index.html')
 
-if __name__ == '__main__':
-    if not all_leagues_data: 
-        print("КРИТИЧЕСКАЯ ОШИБКА: Не удалось загрузить players.csv")
-    else:
-        print("Сервер запускается...")
-        socketio.run(app, debug=True, host='0.0.0.0', port=os.environ.get('PORT', 5000))
+# Тут должен быть твой код для bot.py и start.sh, если ты их используешь
+# Если ты запускаешь `server.py` напрямую, то этот код ниже:
+
+# if __name__ == '__main__':
+#     if not all_leagues_data: 
+#         print("КРИТИЧЕСКАЯ ОШИБКА: Не удалось загрузить players.csv")
+#     else:
+#         print("Сервер запускается...")
+#         socketio.run(app, debug=True, host='0.0.0.0', port=os.environ.get('PORT', 5000))

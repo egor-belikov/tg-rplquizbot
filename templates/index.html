@@ -19,6 +19,7 @@
         button:hover { background-color: var(--accent-hover-color); }
         button:disabled { background-color: var(--secondary-color); cursor: not-allowed; }
         input[type="text"], input[type="number"], select { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid var(--secondary-color); background-color: var(--primary-color); color: var(--text-color); font-size: 16px; box-sizing: border-box; }
+        input[type="text"]:disabled { background-color: #222; }
         .container { width: 100%; max-width: 600px; margin: 0 auto; text-align: center; }
         #loading-screen { justify-content: center; }
         .loader { border: 8px solid var(--secondary-color); border-top: 8px solid var(--accent-color); border-radius: 50%; width: 60px; height: 60px; animation: spin 1s linear infinite; }
@@ -31,16 +32,15 @@
         #game-screen .game-header { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 15px; }
         .player-info { padding: 5px; border-radius: 4px; }
         .player-info.active { box-shadow: 0 2px 0 var(--accent-color); }
-        #named-players-list, #summary-player-list { list-style: none; padding: 0; max-height: 40vh; overflow-y: auto; margin: 15px 0; text-align: left; }
+        #named-players-list { list-style: none; padding: 0; max-height: 40vh; overflow-y: auto; margin: 15px 0; text-align: left; }
         #leaderboard-screen table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         #leaderboard-screen th, #leaderboard-screen td { padding: 10px; border-bottom: 1px solid var(--secondary-color); text-align: left; }
-        #summary-screen .container { text-align: center; }
-
-        /* --- НОВЫЕ СТИЛИ ДЛЯ КНОПКИ ОТМЕНЫ --- */
+        
+        /* --- СТИЛИ ДЛЯ КНОПКИ ОТМЕНЫ --- */
         .cancel-btn { background-color: var(--cancel-color); }
         .cancel-btn:hover { background-color: #c45a54; }
 
-        /* --- НОВЫЕ СТИЛИ ДЛЯ ВКЛАДОК НАСТРОЕК --- */
+        /* --- СТИЛИ ДЛЯ ВКЛАДОК НАСТРОЕК --- */
         .tabs-container { display: flex; margin-bottom: 15px; }
         .tab-btn { flex: 1; padding: 10px; background-color: var(--primary-color); border: 1px solid var(--secondary-color); color: var(--text-color); cursor: pointer; border-radius: 0; }
         .tab-btn:first-child { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
@@ -51,6 +51,52 @@
         #clubs-selection-list { max-height: 200px; overflow-y: auto; border: 1px solid var(--secondary-color); padding: 10px; border-radius: 8px; }
         .club-item { display: block; text-align: left; margin: 5px 0; }
         #settings-error-msg { color: var(--incorrect-color); height: 20px; margin-top: 10px; }
+
+        /* --- ИСПРАВЛЕНИЕ: ДИЗАЙН КНОПОК НАСТРОЕК --- */
+        .button-row {
+            display: flex;
+            margin-top: 20px;
+        }
+        .button-row button {
+            flex: 1; /* Каждая кнопка занимает 50% */
+        }
+        .secondary-btn {
+            background-color: var(--secondary-color);
+            margin-right: 10px;
+        }
+        .secondary-btn:hover {
+            background-color: #555;
+        }
+
+        /* --- ИСПРАВЛЕНИЕ: ДИЗАЙН СПИСКА ИТОГОВ --- */
+        #summary-screen .container { text-align: left; }
+        .summary-list-wrapper h4 { text-align: center; }
+        #summary-list-container {
+            position: relative;
+            max-height: 40vh; /* Высота скролла */
+            overflow-y: auto;
+            border: 1px solid var(--secondary-color);
+            border-radius: 8px;
+            padding: 10px;
+            background-color: var(--primary-color);
+        }
+        /* Градиент для подсказки о скролле */
+        #summary-list-container::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 30px; /* Высота затемнения */
+            background: linear-gradient(to top, var(--primary-color) 0%, rgba(44, 44, 44, 0) 100%);
+            pointer-events: none; /* Позволяет кликать/скроллить сквозь градиент */
+        }
+        #summary-player-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            text-align: left;
+        }
     </style>
 </head>
 <body>
@@ -85,16 +131,19 @@
             <div id="tab-manual" class="tab-content">
                 <p style="font-size: 12px; color: #aaa;">Выберите от 3 до <span id="max-clubs-count">16</span> клубов для игры.</p>
                 <p id="manual-clubs-count" style="font-weight: bold;">Выбрано: 0</p>
-                <div id="clubs-selection-list">
-                    </div>
+                <div id="clubs-selection-list"></div>
             </div>
 
             <p id="settings-error-msg"></p>
-            <button id="confirm-create-game-btn" disabled>Создать PvP Игру</button>
-            <button id="confirm-training-btn" style="display: none;" disabled>Начать Тренировку</button>
-            <button id="back-to-lobby-btn">Назад</button>
-        </div>
+            
+            <div class="button-row">
+                <button id="back-to-lobby-btn" class="secondary-btn">Назад</button>
+                <button id="confirm-create-game-btn" disabled>Создать PvP Игру</button>
+                <button id="confirm-training-btn" style="display: none;" disabled>Начать Тренировку</button>
+            </div>
+            </div>
     </div>
+    
     <div id="game-screen" class="screen">
         <div class="container">
             <div class="game-header">
@@ -113,15 +162,21 @@
 
     <div id="summary-screen" class="screen">
         <div class="container">
-            <h2 id="summary-title">Раунд завершен!</h2>
-            <h3 id="summary-club-name"></h3>
-            <p><strong>Текущий счет: <span id="summary-score"></span></strong></p>
-            <ul id="summary-player-list">
-                </ul>
-            <button id="skip-pause-btn">Следующий раунд</button>
+            <h2 id="summary-title" style="text-align: center;">Раунд завершен!</h2>
+            <h3 id="summary-club-name" style="text-align: center;"></h3>
+            <p style="text-align: center;"><strong>Текущий счет: <span id="summary-score"></span></strong></p>
+            
+            <div class="summary-list-wrapper">
+                <h4 style="text-align: center;">Весь состав:</h4>
+                <div id="summary-list-container">
+                    <ul id="summary-player-list">
+                        </ul>
+                </div>
+            </div>
+            
+            <button id="skip-pause-btn" style="width: 100%; margin-top: 20px;">Следующий раунд</button>
         </div>
     </div>
-    
     <div id="leaderboard-screen" class="screen">
         <div class="container">
             <h2>Таблица Лидеров</h2>
@@ -146,7 +201,7 @@
                 telegramId: null, 
                 currentRoomId: null, 
                 myPlayerIndex: null,
-                maxClubsInLeague: 16 // default
+                maxClubsInLeague: 16
             };
             let gameTimerInterval = null; 
             const screens = {
@@ -159,7 +214,6 @@
                 leaderboard: document.getElementById('leaderboard-screen'),
             };
 
-            // --- Элементы управления настройками ---
             const settingsTitle = document.getElementById('settings-title');
             const confirmCreateBtn = document.getElementById('confirm-create-game-btn');
             const confirmTrainingBtn = document.getElementById('confirm-training-btn');
@@ -202,7 +256,8 @@
                 document.getElementById('summary-score').textContent = `${p1_score} - ${p2_score}`;
 
                 const summaryList = document.getElementById('summary-player-list');
-                summaryList.innerHTML = '<h4>Весь состав:</h4>';
+                // --- ИСПРАВЛЕНИЕ: Очищаем только список, H4 теперь снаружи ---
+                summaryList.innerHTML = '';
                 
                 data.fullPlayerList.forEach(fullName => {
                     const li = document.createElement('li');
@@ -210,8 +265,10 @@
                     if (namedPlayer) {
                         const authorNickname = data.players[namedPlayer.by].nickname;
                         li.innerHTML = `✅ ${fullName} (<em>${authorNickname}</em>)`;
+                        li.style.color = 'var(--correct-color)';
                     } else {
                         li.innerHTML = `❌ ${fullName}`;
+                        li.style.color = 'var(--text-color)';
                     }
                     summaryList.appendChild(li);
                 });
@@ -236,11 +293,12 @@
                 updateGameUI(state);
             });
             
+            // --- ИСПРАВЛЕНИЕ: ЛОГИКА ПОЛЯ ВВОДА ---
             function updateGameUI(state) {
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
 
                 localState.currentRoomId = state.roomId;
-                localState.myPlayerIndex = -1; // Сброс
+                localState.myPlayerIndex = -1;
                 for (const index in state.players) {
                     if (state.players[index].nickname === localState.nickname) {
                         localState.myPlayerIndex = parseInt(index); break;
@@ -288,14 +346,22 @@
                 
                 const myTurn = state.currentPlayerIndex === localState.myPlayerIndex;
                 const guessInput = document.getElementById('guess-input');
-                guessInput.disabled = !myTurn;
+                
+                // --- ИСПРАВЛЕНИЕ ЛОГИКИ ---
+                guessInput.disabled = false; // Поле ввода ВСЕГДА активно
+                if (myTurn) {
+                    guessInput.placeholder = "Введите фамилию игрока";
+                    guessInput.focus();
+                } else {
+                    guessInput.placeholder = "Ход соперника... (можно печатать)";
+                }
                 document.getElementById('submit-guess-btn').disabled = !myTurn;
                 document.getElementById('surrender-btn').disabled = !myTurn;
-                
-                if(myTurn) guessInput.focus();
+                // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
                 
                 document.getElementById('guess-result-msg').textContent = '';
             }
+            // --- КОНЕЦ ИСПРАВЛЕННОЙ ФУНКЦИИ ---
 
             socket.on('game_over', (data) => {
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
@@ -362,9 +428,7 @@
                 showScreen('settings');
             }
 
-            // --- НОВАЯ ЛОГИКА ЭКРАНА НАСТРОЕК ---
-
-            // Переключение вкладок
+            // --- ЛОГИКА ЭКРАНА НАСТРОЕК ---
             tabButtons.forEach(button => {
                 button.addEventListener('click', () => {
                     tabButtons.forEach(btn => btn.classList.remove('active'));
@@ -374,33 +438,28 @@
                     tabContents.forEach(content => {
                         content.classList.toggle('active', content.id === `tab-${tabId}`);
                     });
-                    validateSettings(); // Проверяем валидность при смене вкладки
+                    validateSettings();
                 });
             });
 
-            // Обновление данных о клубах
             socket.on('league_clubs_data', (data) => {
                 localState.maxClubsInLeague = data.clubs.length;
                 
-                // Настройка ползунка
                 randomClubsSlider.max = localState.maxClubsInLeague;
                 const defaultValue = Math.min(10, localState.maxClubsInLeague);
                 randomClubsSlider.value = defaultValue;
                 randomClubsLabel.textContent = `Количество клубов: ${defaultValue}`;
                 
-                // Настройка текста
                 maxClubsCountSpan.textContent = localState.maxClubsInLeague;
                 
-                // Заполнение списка чекбоксов
                 clubsSelectionList.innerHTML = '';
                 data.clubs.forEach(club => {
                     clubsSelectionList.innerHTML += `<label class="club-item"><input type="checkbox" id="club-${club}" value="${club}"><span style="margin-left: 8px;">${club}</span></label>`;
                 });
                 
-                validateSettings(); // Проверяем валидность при загрузке
+                validateSettings();
             });
 
-            // Слушатели для валидации
             randomClubsSlider.addEventListener('input', () => {
                 randomClubsLabel.textContent = `Количество клубов: ${randomClubsSlider.value}`;
                 validateSettings();
@@ -412,7 +471,6 @@
                 }
             });
 
-            // Функция валидации
             function validateSettings() {
                 const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
                 let isValid = false;
@@ -440,7 +498,6 @@
                 confirmTrainingBtn.disabled = !isValid;
             }
 
-            // Обновленная функция создания игры
             function handleCreateGame(isTraining) {
                 const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
                 let settings = {
@@ -452,10 +509,8 @@
 
                 if (activeTab === 'random') {
                     settings.num_rounds = parseInt(randomClubsSlider.value, 10);
-                    // selected_clubs остается пустым, сервер сам выберет
                 } else if (activeTab === 'manual') {
                     settings.selected_clubs = Array.from(document.querySelectorAll('#clubs-selection-list input:checked')).map(cb => cb.value);
-                    settings.num_rounds = settings.selected_clubs.length;
                 }
 
                 if (isTraining) {
@@ -465,52 +520,38 @@
                     showScreen('lobby');
                 }
             }
-            // --- КОНЕЦ НОВОЙ ЛОГИКИ НАСТРОЕК ---
-
 
             confirmCreateBtn.addEventListener('click', () => handleCreateGame(false));
             confirmTrainingBtn.addEventListener('click', () => handleCreateGame(true));
             
-            // --- ОБНОВЛЕННАЯ ЛОГИКА ЛОББИ ---
+            // --- ЛОГИКА ЛОББИ ---
             openGamesList.addEventListener('click', (e) => {
-                // Нажатие на "Войти"
                 if (e.target.classList.contains('join-btn')) {
                     socket.emit('join_game', { creator_sid: e.target.getAttribute('data-creator-sid'), nickname: localState.nickname });
                 }
-                // Нажатие на "Отменить"
                 if (e.target.classList.contains('cancel-btn')) {
                     socket.emit('cancel_game');
                 }
             });
 
-            // --- ИСПРАВЛЕНИЕ: ИЗМЕНЕНА ЛОГИКА ОТОБРАЖЕНИЯ КАРТОЧКИ ---
             socket.on('update_lobby', (games) => {
                 openGamesList.innerHTML = games.length === 0 ? '<p>Нет доступных игр.</p>' : '';
                 games.forEach(game => {
-                    
-                    // --- НОВАЯ ЛОГИКА ОПИСАНИЯ ---
                     let clubsText = '';
                     const settings = game.settings;
                     
                     if (settings.selected_clubs && settings.selected_clubs.length > 0) {
-                        // Режим "Выбрать вручную"
                         clubsText = `Клубы: ${settings.selected_clubs.join(', ')}`;
                     } else if (settings.num_rounds && settings.num_rounds > 0) {
-                        // Режим "Случайные клубы"
                         clubsText = `Случайные клубы: ${settings.num_rounds} шт.`;
                     } else {
-                        // Старый фолбэк (на всякий случай)
                         clubsText = 'Все клубы лиги'; 
                     }
-                    // --- КОНЕЦ НОВОЙ ЛОГИКИ ---
 
-                    // ОПРЕДЕЛЯЕМ ТИП КНОПКИ
                     let buttonHtml = '';
                     if (game.creator_sid === socket.id) {
-                        // Это моя игра, я могу ее отменить
                         buttonHtml = `<button class="cancel-btn" data-creator-sid="${game.creator_sid}">Отменить</button>`;
                     } else {
-                        // Это чужая игра, я могу войти
                         buttonHtml = `<button class="join-btn" data-creator-sid="${game.creator_sid}">Войти</button>`;
                     }
 
@@ -524,7 +565,6 @@
                         </div>`;
                 });
             });
-            // --- КОНЕЦ ОБНОВЛЕННОЙ ЛОГИКИ ЛОББИ ---
             
             socket.on('lobby_stats_update', (stats) => {
                 document.getElementById('lobby-stats').textContent = `В лобби: ${stats.players_in_lobby} | В игре: ${stats.players_in_game}`;
