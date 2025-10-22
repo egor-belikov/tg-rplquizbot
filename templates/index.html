@@ -19,7 +19,8 @@
         button:hover { background-color: var(--accent-hover-color); }
         button:disabled { background-color: var(--secondary-color); cursor: not-allowed; }
         input[type="text"], input[type="number"], select { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid var(--secondary-color); background-color: var(--primary-color); color: var(--text-color); font-size: 16px; box-sizing: border-box; }
-        input[type="text"]:disabled { background-color: #222; } /* Стиль для заблокированного инпута */
+        /* --- ИСПРАВЛЕНИЕ: стиль для НЕзаблокированного инпута (Request 1) --- */
+        input[type="text"]:disabled { background-color: #222; } /* Остается на случай */
         .container { width: 100%; max-width: 600px; margin: 0 auto; text-align: center; }
         #loading-screen { justify-content: center; }
         .loader { border: 8px solid var(--secondary-color); border-top: 8px solid var(--accent-color); border-radius: 50%; width: 60px; height: 60px; animation: spin 1s linear infinite; }
@@ -51,73 +52,43 @@
         .club-item { display: block; text-align: left; margin: 5px 0; }
         #settings-error-msg { color: var(--incorrect-color); height: 20px; margin-top: 10px; }
 
-        /* --- ИСПРАВЛЕНИЕ: ДИЗАЙН КНОПОК НАСТРОЕК (Request 4) --- */
-        .button-row {
-            display: flex;
-            gap: 10px; /* Расстояние между кнопками */
-            margin-top: 20px;
-        }
-        .button-row button {
-            flex: 1; /* Кнопки делят пространство */
-            margin: 0; /* Убираем старый margin */
-        }
-        .secondary-btn {
-            background-color: var(--secondary-color);
-        }
-        .secondary-btn:hover {
-            background-color: #555;
-        }
+        .button-row { display: flex; gap: 10px; margin-top: 20px; }
+        .button-row button { flex: 1; margin: 0; }
+        .secondary-btn { background-color: var(--secondary-color); }
+        .secondary-btn:hover { background-color: #555; }
 
-        /* --- ИСПРАВЛЕНИЕ: ДИЗАЙН СПИСКА ИТОГОВ (Request 3) --- */
         #summary-screen .container { text-align: left; }
         #summary-screen h2, #summary-screen h3, #summary-screen p { text-align: center; }
-        .summary-list-wrapper {
-            position: relative; /* Нужно для градиента */
-        }
+        .summary-list-wrapper { position: relative; }
         .summary-list-wrapper h4 { text-align: center; }
         #summary-list-container {
-            position: relative;
-            max-height: 40vh; /* Высота скролла */
-            overflow-y: auto;
-            border: 1px solid var(--secondary-color);
-            border-radius: 8px;
-            padding: 10px;
-            background-color: var(--primary-color);
-            -webkit-overflow-scrolling: touch; /* Плавный скролл на iOS */
+            position: relative; max-height: 40vh; overflow-y: auto;
+            border: 1px solid var(--secondary-color); border-radius: 8px;
+            padding: 10px; background-color: var(--primary-color);
+            -webkit-overflow-scrolling: touch;
         }
-        /* Градиент-подсказка о скролле */
         .summary-list-wrapper::after {
-            content: '';
-            position: absolute;
-            bottom: 1px; /* 1px, чтобы быть внутри рамки */
-            left: 1px;
-            right: 1px;
-            height: 30px; /* Высота затемнения */
-            background: linear-gradient(to top, var(--primary-color) 0%, rgba(44, 44, 44, 0) 100%);
-            pointer-events: none; /* Позволяет кликать/скроллить сквозь градиент */
-            border-bottom-left-radius: 8px; /* Повторяем радиус */
-            border-bottom-right-radius: 8px;
-            transition: opacity 0.3s; /* Плавное исчезновение */
-            opacity: 1;
+            content: ''; position: absolute; bottom: 1px; left: 1px; right: 1px;
+            height: 30px; background: linear-gradient(to top, var(--primary-color) 0%, rgba(44, 44, 44, 0) 100%);
+            pointer-events: none; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;
+            transition: opacity 0.3s; opacity: 1;
         }
-        /* Класс, который JS добавит при докрутке до низа */
-        .summary-list-wrapper.scrolled-to-bottom::after {
-            opacity: 0;
+        .summary-list-wrapper.scrolled-to-bottom::after { opacity: 0; }
+        #summary-player-list { list-style: none; padding: 0; margin: 0; text-align: left; }
+        
+        /* --- НОВЫЙ СТИЛЬ: Таймер на экране Summary (Request 5) --- */
+        #summary-countdown {
+            text-align: center;
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 10px;
         }
-        #summary-player-list {
-            list-style: none;
-            padding: 0;
-            margin: 0;
-            text-align: left;
-        }
-        /* --- КОНЕЦ ИСПРАВЛЕНИЯ СТИЛЕЙ ИТОГОВ --- */
 
-        /* Стили для нового экрана Game Over */
         #game-over-screen .container { text-align: left; }
         #game-over-screen h2, #game-over-screen h3 { text-align: center; }
         #game-over-score { font-size: 24px; font-weight: bold; text-align: center; }
         #game-over-reason { text-align: center; font-style: italic; color: #aaa; }
-        #game-over-ratings { text-align: center; }
+        #game-over-ratings { text-align: center; margin-top: 15px; margin-bottom: 20px; }
         #game-over-back-btn { width: 100%; margin-top: 20px; }
         
     </style>
@@ -192,12 +163,13 @@
             <div class="summary-list-wrapper">
                 <h4>Весь состав:</h4>
                 <div id="summary-list-container">
-                    <ul id="summary-player-list">
-                        </ul>
+                    <ul id="summary-player-list"></ul>
                 </div>
             </div>
             
-            <button id="skip-pause-btn" style="width: 100%; margin-top: 20px;">Следующий раунд</button>
+            <p id="summary-countdown">10</p> 
+            
+            <button id="skip-pause-btn" style="width: 100%; margin-top: 10px;">Следующий раунд</button>
         </div>
     </div>
     
@@ -228,13 +200,14 @@
                         <th>Итог</th>
                     </tr>
                 </thead>
-                <tbody>
-                    </tbody>
+                <tbody></tbody>
             </table>
             
             <button id="game-over-back-btn">В лобби</button>
         </div>
     </div>
+
+
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
@@ -244,13 +217,13 @@
             tg.expand();
 
             let localState = { 
-                nickname: null, 
-                telegramId: null, 
-                currentRoomId: null, 
-                myPlayerIndex: null,
-                maxClubsInLeague: 16
+                nickname: null, telegramId: null, currentRoomId: null, 
+                myPlayerIndex: null, maxClubsInLeague: 16
             };
             let gameTimerInterval = null; 
+            // --- НОВЫЙ ТАЙМЕР: Для экрана Summary (Request 5) ---
+            let summaryCountdownInterval = null; 
+            
             const screens = {
                 loading: document.getElementById('loading-screen'),
                 nickname: document.getElementById('nickname-screen'),
@@ -259,10 +232,9 @@
                 game: document.getElementById('game-screen'),
                 summary: document.getElementById('summary-screen'),
                 leaderboard: document.getElementById('leaderboard-screen'),
-                gameOver: document.getElementById('game-over-screen') // <-- НОВЫЙ ЭКРАН
+                gameOver: document.getElementById('game-over-screen')
             };
 
-            // --- Элементы управления ---
             const settingsTitle = document.getElementById('settings-title');
             const confirmCreateBtn = document.getElementById('confirm-create-game-btn');
             const confirmTrainingBtn = document.getElementById('confirm-training-btn');
@@ -275,24 +247,26 @@
             const settingsErrorMsg = document.getElementById('settings-error-msg');
             const maxClubsCountSpan = document.getElementById('max-clubs-count');
             const openGamesList = document.getElementById('open-games-list');
-            
-            // --- ИСПРАВЛЕНИЕ: Элементы для градиента и game over (Request 3, 2) ---
             const summaryListContainer = document.getElementById('summary-list-container');
             const gameOverBackBtn = document.getElementById('game-over-back-btn');
+            // --- НОВЫЙ ЭЛЕМЕНТ: Дисплей таймера (Request 5) ---
+            const summaryCountdownDisplay = document.getElementById('summary-countdown');
 
-            // --- ИСПРАВЛЕНИЕ: Слушатель скролла для градиента (Request 3) ---
+
             summaryListContainer.addEventListener('scroll', () => {
                 const wrapper = summaryListContainer.parentElement;
-                // +1 для погрешности округления в браузерах
                 const isAtBottom = summaryListContainer.scrollHeight - summaryListContainer.scrollTop <= summaryListContainer.clientHeight + 1;
                 wrapper.classList.toggle('scrolled-to-bottom', isAtBottom);
             });
 
-            // --- ИСПРАВЛЕНИЕ: Кнопка "В лобби" с экрана Game Over (Request 2) ---
             gameOverBackBtn.addEventListener('click', () => showScreen('lobby'));
 
-
             function showScreen(screenName) {
+                // Очищаем таймер summary, если уходим с него
+                if (summaryCountdownInterval) {
+                    clearInterval(summaryCountdownInterval);
+                    summaryCountdownInterval = null;
+                }
                 const screenKey = Object.keys(screens).find(key => screens[key] === document.getElementById(`${screenName}-screen`)) || screenName;
                 Object.values(screens).forEach(screen => screen.classList.remove('active'));
                 screens[screenKey].classList.add('active');
@@ -312,12 +286,12 @@
                 }
             });
 
+            // --- ИСПРАВЛЕНИЕ: ДОБАВЛЕН ЗАПУСК ТАЙМЕРА (Request 5) ---
             socket.on('round_summary', (data) => {
                 if (gameTimerInterval) clearInterval(gameTimerInterval); 
                 
-                // --- ИСПРАВЛЕНИЕ: Сброс класса скролла (Request 3) ---
                 summaryListContainer.parentElement.classList.remove('scrolled-to-bottom');
-                summaryListContainer.scrollTop = 0; // Скролл вверх
+                summaryListContainer.scrollTop = 0; 
                 
                 document.getElementById('summary-club-name').textContent = data.clubName;
                 const p1_score = data.scores[0] || 0;
@@ -343,10 +317,30 @@
 
                 document.getElementById('skip-pause-btn').textContent = 'Следующий раунд';
                 document.getElementById('skip-pause-btn').disabled = false;
+                
+                // Запускаем таймер
+                let countdown = 10; // Берем из константы сервера PAUSE_BETWEEN_ROUNDS
+                summaryCountdownDisplay.textContent = countdown;
+                if (summaryCountdownInterval) clearInterval(summaryCountdownInterval); // Очищаем старый, если есть
+                summaryCountdownInterval = setInterval(() => {
+                    countdown--;
+                    summaryCountdownDisplay.textContent = countdown;
+                    if (countdown <= 0) {
+                        clearInterval(summaryCountdownInterval);
+                        summaryCountdownInterval = null;
+                        // Можно добавить текст "Загрузка..."
+                    }
+                }, 1000);
+                
                 showScreen('summary');
             });
 
+            // --- ИСПРАВЛЕНИЕ: ОСТАНАВЛИВАЕМ ТАЙМЕР ПРИ СКИПЕ (Request 5) ---
             document.getElementById('skip-pause-btn').addEventListener('click', () => {
+                if (summaryCountdownInterval) {
+                    clearInterval(summaryCountdownInterval);
+                    summaryCountdownInterval = null;
+                }
                 socket.emit('request_skip_pause', { roomId: localState.currentRoomId });
                 document.getElementById('skip-pause-btn').disabled = true;
                 document.getElementById('skip-pause-btn').textContent = 'Ожидаем...';
@@ -361,7 +355,6 @@
                 updateGameUI(state);
             });
             
-            // --- ИСПРАВЛЕНИЕ: ЛОГИКА ПОЛЯ ВВОДА (Request 1) ---
             function updateGameUI(state) {
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
 
@@ -415,10 +408,12 @@
                 const myTurn = state.currentPlayerIndex === localState.myPlayerIndex;
                 const guessInput = document.getElementById('guess-input');
                 
-                guessInput.disabled = false; // Поле ввода ВСЕГДА активно
+                guessInput.disabled = false; // Поле ввода ВСЕГДА активно (Request 1)
                 if (myTurn) {
                     guessInput.placeholder = "Введите фамилию игрока";
-                    guessInput.focus();
+                    if(document.activeElement !== guessInput) { // Не переводить фокус, если уже печатаем
+                       // guessInput.focus(); // Убрал авто-фокус, он может мешать
+                    }
                 } else {
                     guessInput.placeholder = "Ход соперника... (можно печатать)";
                 }
@@ -427,44 +422,50 @@
                 
                 document.getElementById('guess-result-msg').textContent = '';
             }
-            // --- КОНЕЦ ИСПРАВЛЕННОЙ ФУНКЦИИ ---
 
-            // --- ИСПРАВЛЕНИЕ: ПОЛНОСТЬЮ ПЕРЕПИСАННЫЙ ОБРАБОТЧИК GAME OVER (Request 2) ---
-            
-            // Вспомогательная функция для перевода причин
+            // --- НОВЫЙ ОБРАБОТЧИК GAME OVER (Request 2) ---
             function getEndReasonText(reason) {
                 if (reason === 'unreachable_score') return 'Игра завершена досрочно: счет недосягаемый.';
                 if (reason === 'normal') return 'Все раунды сыграны.';
                 return 'Игра окончена.'; // Фолбэк
             }
             
-            // Вспомогательная функция для таблицы раундов
             function getRoundOutcomeText(round, p1_nick, p2_nick) {
-                switch (round.result_type) {
-                    case 'completed':
-                        return 'Ничья (все названы)';
-                    case 'surrender':
-                        return `Сдался: ${round.player_nickname}`;
-                    case 'timeout':
-                        return `Время вышло: ${round.player_nickname}`;
-                    default:
-                        return 'н/д';
+                const winnerIndex = round.winner_index;
+                const reason = round.result_type;
+                const loserNick = round.player_nickname;
+
+                if (reason === 'completed' || winnerIndex === 'draw') {
+                    return 'Ничья (все названы)';
+                } else if (reason === 'surrender') {
+                    const winnerNick = (loserNick === p1_nick) ? p2_nick : p1_nick;
+                    return `Победил ${winnerNick} (соперник сдался)`;
+                } else if (reason === 'timeout') {
+                     const winnerNick = (loserNick === p1_nick) ? p2_nick : p1_nick;
+                    return `Победил ${winnerNick} (время вышло)`;
                 }
+                return 'н/д';
             }
 
             socket.on('game_over', (data) => {
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
+                 // Очищаем и таймер summary на всякий случай
+                if (summaryCountdownInterval) {
+                    clearInterval(summaryCountdownInterval);
+                    summaryCountdownInterval = null;
+                }
                 
                 const p1_nick = data.players[0].nickname;
-                const p2_nick = data.players[1] ? data.players[1].nickname : 'БОТ';
+                // Проверяем, есть ли второй игрок (для соло режима)
+                const p2_nick = data.players[1] ? data.players[1].nickname : null;
                 
-                // 1. Заполняем счет и причину
                 document.getElementById('game-over-score').textContent = `Счет ${data.final_scores[0]} - ${data.final_scores[1] || 0}`;
                 document.getElementById('game-over-reason').textContent = getEndReasonText(data.end_reason);
 
-                // 2. Заполняем рейтинги
-                let ratingText = 'Изменение рейтинга (Тренировка)';
-                if (data.rating_changes) {
+                let ratingText = '';
+                if (data.mode === 'solo') {
+                    ratingText = 'Рейтинг в тренировке не меняется.';
+                } else if (data.rating_changes) {
                     const p1 = data.rating_changes['0'];
                     const p2 = data.rating_changes['1'];
                     const p1_diff = p1.new - p1.old;
@@ -474,17 +475,19 @@
                         <b>${p1.nickname}:</b> ${p1.new} (${p1_diff >= 0 ? '+' : ''}${p1_diff})<br>
                         <b>${p2.nickname}:</b> ${p2.new} (${p2_diff >= 0 ? '+' : ''}${p2_diff})
                     `;
+                } else {
+                     ratingText = 'Не удалось загрузить изменение рейтинга.';
                 }
                 document.getElementById('game-over-ratings').innerHTML = ratingText;
 
-                // 3. Заполняем таблицу истории
                 const historyTable = document.querySelector('#game-over-table tbody');
                 historyTable.innerHTML = '';
                 
                 if (data.history && data.history.length > 0) {
                     data.history.forEach((round, index) => {
                         const tr = document.createElement('tr');
-                        const outcomeText = getRoundOutcomeText(round, p1_nick, p2_nick);
+                        // В соло режиме нет ников для истории раунда
+                        const outcomeText = getRoundOutcomeText(round, p1_nick, p2_nick || 'Тренировка'); 
                         
                         tr.innerHTML = `
                             <td>${index + 1}</td>
@@ -497,13 +500,10 @@
                     historyTable.innerHTML = `<tr><td colspan="3">История раундов пуста.</td></tr>`;
                 }
 
-                // 4. Показываем экран
                 showScreen('gameOver');
             });
-            // --- КОНЕЦ НОВОГО ОБРАБОТЧИКА GAME OVER ---
 
             socket.on('turn_updated', (state) => {
-                // console.log("Turn updated, redrawing UI");
                 updateGameUI(state);
             });
 
@@ -558,30 +558,23 @@
                 button.addEventListener('click', () => {
                     tabButtons.forEach(btn => btn.classList.remove('active'));
                     button.classList.add('active');
-                    
                     const tabId = button.getAttribute('data-tab');
-                    tabContents.forEach(content => {
-                        content.classList.toggle('active', content.id === `tab-${tabId}`);
-                    });
+                    tabContents.forEach(content => content.classList.toggle('active', content.id === `tab-${tabId}`));
                     validateSettings();
                 });
             });
 
             socket.on('league_clubs_data', (data) => {
                 localState.maxClubsInLeague = data.clubs.length;
-                
                 randomClubsSlider.max = localState.maxClubsInLeague;
                 const defaultValue = Math.min(10, localState.maxClubsInLeague);
                 randomClubsSlider.value = defaultValue;
                 randomClubsLabel.textContent = `Количество клубов: ${defaultValue}`;
-                
                 maxClubsCountSpan.textContent = localState.maxClubsInLeague;
-                
                 clubsSelectionList.innerHTML = '';
                 data.clubs.forEach(club => {
                     clubsSelectionList.innerHTML += `<label class="club-item"><input type="checkbox" id="club-${club}" value="${club}"><span style="margin-left: 8px;">${club}</span></label>`;
                 });
-                
                 validateSettings();
             });
 
@@ -591,33 +584,22 @@
             });
 
             clubsSelectionList.addEventListener('change', (e) => {
-                if (e.target.type === 'checkbox') {
-                    validateSettings();
-                }
+                if (e.target.type === 'checkbox') validateSettings();
             });
 
             function validateSettings() {
                 const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
-                let isValid = false;
-                let error = "";
-
+                let isValid = false; let error = "";
                 if (activeTab === 'random') {
                     const count = parseInt(randomClubsSlider.value, 10);
-                    if (count < 3) {
-                        error = "Нужно выбрать минимум 3 клуба.";
-                    } else {
-                        isValid = true;
-                    }
+                    if (count < 3) error = "Нужно выбрать минимум 3 клуба.";
+                    else isValid = true;
                 } else if (activeTab === 'manual') {
                     const checkedCount = document.querySelectorAll('#clubs-selection-list input:checked').length;
                     manualClubsCount.textContent = `Выбрано: ${checkedCount}`;
-                    if (checkedCount < 3) {
-                        error = `Нужно выбрать минимум 3 клуба (выбрано ${checkedCount}).`;
-                    } else {
-                        isValid = true;
-                    }
+                    if (checkedCount < 3) error = `Нужно выбрать минимум 3 клуба (выбрано ${checkedCount}).`;
+                    else isValid = true;
                 }
-                
                 settingsErrorMsg.textContent = error;
                 confirmCreateBtn.disabled = !isValid;
                 confirmTrainingBtn.disabled = !isValid;
@@ -628,22 +610,13 @@
                 let settings = {
                     league: document.getElementById('league-select').value,
                     time_bank: parseFloat(document.getElementById('time-bank-input').value),
-                    num_rounds: 0,
-                    selected_clubs: []
+                    num_rounds: 0, selected_clubs: []
                 };
-
-                if (activeTab === 'random') {
-                    settings.num_rounds = parseInt(randomClubsSlider.value, 10);
-                } else if (activeTab === 'manual') {
-                    settings.selected_clubs = Array.from(document.querySelectorAll('#clubs-selection-list input:checked')).map(cb => cb.value);
-                }
-
-                if (isTraining) {
-                    socket.emit('start_game', { mode: 'solo', nickname: localState.nickname, settings: settings });
-                } else {
-                    socket.emit('create_game', { nickname: localState.nickname, settings: settings });
-                    showScreen('lobby');
-                }
+                if (activeTab === 'random') settings.num_rounds = parseInt(randomClubsSlider.value, 10);
+                else if (activeTab === 'manual') settings.selected_clubs = Array.from(document.querySelectorAll('#clubs-selection-list input:checked')).map(cb => cb.value);
+                
+                if (isTraining) socket.emit('start_game', { mode: 'solo', nickname: localState.nickname, settings: settings });
+                else { socket.emit('create_game', { nickname: localState.nickname, settings: settings }); showScreen('lobby'); }
             }
 
             confirmCreateBtn.addEventListener('click', () => handleCreateGame(false));
@@ -651,43 +624,21 @@
             
             // --- ЛОГИКА ЛОББИ ---
             openGamesList.addEventListener('click', (e) => {
-                if (e.target.classList.contains('join-btn')) {
-                    socket.emit('join_game', { creator_sid: e.target.getAttribute('data-creator-sid'), nickname: localState.nickname });
-                }
-                if (e.target.classList.contains('cancel-btn')) {
-                    socket.emit('cancel_game');
-                }
+                if (e.target.classList.contains('join-btn')) socket.emit('join_game', { creator_sid: e.target.getAttribute('data-creator-sid'), nickname: localState.nickname });
+                if (e.target.classList.contains('cancel-btn')) socket.emit('cancel_game');
             });
 
             socket.on('update_lobby', (games) => {
                 openGamesList.innerHTML = games.length === 0 ? '<p>Нет доступных игр.</p>' : '';
                 games.forEach(game => {
-                    let clubsText = '';
-                    const settings = game.settings;
-                    
-                    if (settings.selected_clubs && settings.selected_clubs.length > 0) {
-                        clubsText = `Клубы: ${settings.selected_clubs.join(', ')}`;
-                    } else if (settings.num_rounds && settings.num_rounds > 0) {
-                        clubsText = `Случайные клубы: ${settings.num_rounds} шт.`;
-                    } else {
-                        clubsText = 'Все клубы лиги'; 
-                    }
-
-                    let buttonHtml = '';
-                    if (game.creator_sid === socket.id) {
-                        buttonHtml = `<button class="cancel-btn" data-creator-sid="${game.creator_sid}">Отменить</button>`;
-                    } else {
-                        buttonHtml = `<button class="join-btn" data-creator-sid="${game.creator_sid}">Войти</button>`;
-                    }
-
-                    openGamesList.innerHTML += `
-                        <div class="game-card">
-                            <div class="game-card-info">
-                                <p><strong>${game.creator_nickname}</strong> (${game.creator_rating})</p>
-                                <p style="font-size:12px;">${clubsText}</p>
-                            </div>
-                            ${buttonHtml}
-                        </div>`;
+                    let clubsText = ''; const settings = game.settings;
+                    if (settings.selected_clubs && settings.selected_clubs.length > 0) clubsText = `Клубы: ${settings.selected_clubs.join(', ')}`;
+                    else if (settings.num_rounds && settings.num_rounds > 0) clubsText = `Случайные клубы: ${settings.num_rounds} шт.`;
+                    else clubsText = 'Все клубы лиги'; 
+                    let buttonHtml = (game.creator_sid === socket.id) 
+                        ? `<button class="cancel-btn" data-creator-sid="${game.creator_sid}">Отменить</button>`
+                        : `<button class="join-btn" data-creator-sid="${game.creator_sid}">Войти</button>`;
+                    openGamesList.innerHTML += `<div class="game-card"><div class="game-card-info"><p><strong>${game.creator_nickname}</strong> (${game.creator_rating})</p><p style="font-size:12px;">${clubsText}</p></div>${buttonHtml}</div>`;
                 });
             });
             
@@ -721,6 +672,9 @@
             
             socket.on('opponent_disconnected', (data) => {
                 alert(data.message || 'Соперник отключился.');
+                // Очищаем таймеры на всякий случай
+                if (gameTimerInterval) clearInterval(gameTimerInterval);
+                if (summaryCountdownInterval) clearInterval(summaryCountdownInterval);
                 showScreen('lobby');
             });
         });
