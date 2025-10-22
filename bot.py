@@ -10,6 +10,8 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import WebAppInfo
+# --- ИСПРАВЛЕНИЕ 1: ДОБАВЛЯЕМ НОВЫЙ ИМПОРТ ---
+from aiogram.client.default import DefaultBotProperties
 
 # --- Настройка ---
 # Берем тот же токен, что и для веб-приложения
@@ -54,7 +56,18 @@ WELCOME_TEXT = """Привет, фанат футбола! ⚽️
 
 # Инициализируем бота и диспетчер
 dp = Dispatcher()
-bot = Bot(TOKEN, parse_mode=ParseMode.MARKDOWN)
+
+# --- ИСПРАВЛЕНИЕ 2: ИЗМЕНЯЕМ ИНИЦИАЛИЗАЦИЮ БОТА ---
+# Старый способ (parse_mode=...) удален в aiogram 3.7.0+
+# bot = Bot(TOKEN, parse_mode=ParseMode.MARKDOWN) # <-- Твоя ошибка была тут
+#
+# Используем новый способ через DefaultBotProperties:
+bot = Bot(
+    TOKEN, 
+    default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
+)
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
 
 # --- Обработчик команды /start ---
 
