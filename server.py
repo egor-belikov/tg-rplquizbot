@@ -263,8 +263,15 @@ def start_game_loop(r_id):
                     p1_upd = db.session.get(User, p1_id); p2_upd = db.session.get(User, p2_id)
                     if p1_upd and p2_upd: p1_upd.games_played += 1; p2_upd.games_played += 1; db.session.commit(); print(f"[STATS] {r_id}: Игрокам {p1_upd.nickname}, {p2_upd.nickname} засчитана игра.")
                     else: print(f"[ERROR] {r_id}: Не удалось обновить счетчик игр.")
-                outcome = 0.5;
-                if game.scores[0] > game.scores[1]: outcome = 1.0; elif game.scores[1] > game.scores[0]: outcome = 0.0
+                
+                # --- НАЧАЛО ИСПРАВЛЕНИЯ SYNTAXERROR ---
+                outcome = 0.5
+                if game.scores[0] > game.scores[1]: 
+                    outcome = 1.0
+                elif game.scores[1] > game.scores[0]: 
+                    outcome = 0.0
+                # --- КОНЕЦ ИСПРАВЛЕНИЯ SYNTAXERROR ---
+
                 with app.app_context():
                     p1_r = db.session.get(User, p1_id); p2_r = db.session.get(User, p2_id)
                     if p1_r and p2_r: ratings_tuple = update_ratings(p1_user_obj=p1_r, p2_user_obj=p2_r, p1_outcome=outcome)
@@ -306,7 +313,6 @@ def get_lobby_data_list():
 @socketio.on('connect')
 def handle_connect(): sid = request.sid; print(f"[CONNECTION] Connect: {sid}"); emit('auth_request')
 
-# --- ИСПРАВЛЕНИЕ: Исправлен отступ (и логика) ---
 @socketio.on('disconnect')
 def handle_disconnect():
     sid = request.sid; print(f"[CONNECTION] Disconnect: {sid}"); remove_player_from_lobby(sid)
@@ -317,13 +323,11 @@ def handle_disconnect():
         game = gs['game']; idx = next((i for i, p in game.players.items() if p.get('sid') == sid), -1)
         if idx != -1: 
             term_id, term_gs, disc_idx = r_id, gs, idx
-            # --- НАЧАЛО ИСПРАВЛЕНИЯ ОТСТУПА ---
             if len(game.players) > 1: 
-                opp_idx = 1 - idx; # Исправлена логика поиска оппонента
+                opp_idx = 1 - idx; 
                 if game.players.get(opp_idx) and game.players[opp_idx].get('sid') and game.players[opp_idx]['sid'] != 'BOT': 
                     opp_sid = game.players[opp_idx]['sid']; 
-                    break # Добавлен get()
-            # --- КОНЕЦ ИСПРАВЛЕНИЯ ОТСТУПА ---
+                    break 
     if term_id and term_gs:
         game = term_gs['game']; disc_nick = game.players[disc_idx].get('nickname', '?'); print(f"[DISCONNECT] Player {sid} ({disc_nick}) left game {term_id}. Ending game.")
         if game.mode == 'pvp' and opp_sid:
@@ -333,21 +337,16 @@ def handle_disconnect():
                 if w_obj and l_obj: 
                     w_id, l_id = w_obj.id, l_obj.id; w_obj.games_played += 1; l_obj.games_played += 1; db.session.commit(); print(f"[STATS] {term_id}: Game counted due to disconnect.")
                     p1_r = w_obj if winner_idx == 0 else l_obj; p2_r = l_obj if winner_idx == 0 else w_obj
-                    # Проверяем, что объекты существуют перед вызовом update_ratings
                     if p1_r and p2_r:
                         update_ratings(p1_user_obj=p1_r, p2_user_obj=p2_r, p1_outcome=1.0 if winner_idx == 0 else 0.0)
                         socketio.emit('leaderboard_data', get_leaderboard_data())
                     else:
                          print(f"[ERROR] {term_id}: Не удалось получить объекты User для обновления рейтинга при дисконнекте.")
-                # --- ИСПРАВЛЕННЫЙ ОТСТУП ---
                 else:
                     print(f"[ERROR] {term_id}: Cannot find players ({game.players[winner_idx].get('nickname','?')}, {game.players[loser_idx].get('nickname','?')}) for forfeit.")
-                # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-        # Проверяем подключение оппонента ПЕРЕД отправкой emit
         if socketio.server.manager.is_connected(opp_sid, '/'): add_player_to_lobby(opp_sid); emit('opponent_disconnected', {'message': f'Соперник ({disc_nick}) отключился. Победа.'}, room=opp_sid); print(f"[GAME] {term_id}: Notified {opp_sid} of win.")
         else: print(f"[GAME] {term_id}: Opponent {opp_sid} also disconnected.")
         if term_id in active_games: del active_games[term_id]; broadcast_lobby_stats()
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 # --- Логика аутентификации ---
 def validate_telegram_data(init_data_str):
