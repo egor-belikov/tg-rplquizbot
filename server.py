@@ -194,6 +194,10 @@ class GameState:
         if player2_info: self.players[1] = player2_info
         self.scores = {0: 0.0, 1: 0.0}
 
+        # --- ИЗМЕНЕНИЕ: Определение мин. клубов в зависимости от режима ---
+        min_clubs = 1 if self.mode == 'solo' else 3
+        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
         temp_settings = settings or {}
         league = temp_settings.get('league', 'РПЛ')
         self.all_clubs_data = all_leagues.get(league, {})
@@ -209,20 +213,23 @@ class GameState:
 
         if selected_clubs and len(selected_clubs) > 0:
             valid_selected_clubs = [c for c in selected_clubs if c in self.all_clubs_data]
-            if len(valid_selected_clubs) < 3: # Доп. проверка
-                 print(f"[WARNING] Недостаточно валидных клубов ({len(valid_selected_clubs)}) выбрано вручную. Используются все клубы.")
+            # --- ИЗМЕНЕНИЕ: Используем min_clubs ---
+            if len(valid_selected_clubs) < min_clubs:
+                 print(f"[WARNING] Недостаточно валидных клубов ({len(valid_selected_clubs)}) для режима {self.mode}. Мин: {min_clubs}. Используются все клубы.")
                  available_clubs = list(self.all_clubs_data.keys())
                  self.num_rounds = len(available_clubs)
                  self.game_clubs = random.sample(available_clubs, self.num_rounds)
             else:
                 self.game_clubs = random.sample(valid_selected_clubs, len(valid_selected_clubs))
                 self.num_rounds = len(self.game_clubs)
-        elif num_rounds_setting >= 3: # Проверка на мин. кол-во
+        # --- ИЗМЕНЕНИЕ: Используем min_clubs ---
+        elif num_rounds_setting >= min_clubs:
             available_clubs = list(self.all_clubs_data.keys())
             self.num_rounds = min(num_rounds_setting, len(available_clubs))
             self.game_clubs = random.sample(available_clubs, self.num_rounds)
         else:
-            print("[WARNING] Некорректные настройки клубов (менее 3), выбраны все клубы лиги.")
+            # --- ИЗМЕНЕНИЕ: Используем min_clubs ---
+            print(f"[WARNING] Некорректные настройки клубов (менее {min_clubs}), выбраны все клубы лиги.")
             available_clubs = list(self.all_clubs_data.keys())
             self.num_rounds = len(available_clubs)
             self.game_clubs = random.sample(available_clubs, self.num_rounds)
@@ -577,6 +584,7 @@ def handle_disconnect():
 
             if opponent_sid in socketio.server.manager.connected_sids.get('/', set()): # Проверяем, онлайн ли оппонент
                 add_player_to_lobby(opponent_sid)
+                # --- ИЗМЕНЕНИЕ: Отправляем другое сообщение ---
                 emit('opponent_disconnected', {'message': f'Соперник ({disconnected_player_nick}) отключился. Игра отменена, статистика не засчитана.'}, room=opponent_sid)
                 print(f"[GAME] {game_to_terminate_id}: Отправлено уведомление об отмене игры {opponent_sid}.")
             else:
@@ -695,10 +703,12 @@ def handle_start_game(data):
     if mode == 'solo':
         player1_info_full = {'sid': sid, 'nickname': nickname}; room_id = str(uuid.uuid4()); join_room(room_id)
         try:
+            # --- ИЗМЕНЕНИЕ: Передаем 'solo' в GameState ---
             game = GameState(player1_info_full, all_leagues_data, mode='solo', settings=settings)
+            # --- ИЗМЕНЕНИЕ: Проверка на 0, на случай если лига пуста ---
             if game.num_rounds == 0:
-                 print(f"[ERROR] {nickname} ({sid}) соло игра без клубов."); leave_room(room_id); add_player_to_lobby(sid)
-                 emit('start_game_fail', {'message': 'Не выбраны клубы.'}); return
+                 print(f"[ERROR] {nickname} ({sid}) соло игра создана с 0 клубов."); leave_room(room_id); add_player_to_lobby(sid)
+                 emit('start_game_fail', {'message': 'Не удалось загрузить клубы.'}); return
             active_games[room_id] = {'game': game, 'turn_id': None, 'pause_id': None, 'skip_votes': set(), 'last_round_end_reason': None}
             remove_player_from_lobby(sid); broadcast_lobby_stats()
             print(f"[GAME] {nickname} начал тренировку. Комната: {room_id}. Клубов: {game.num_rounds}")
@@ -713,9 +723,18 @@ def handle_create_game(data):
     sid, nickname, settings = request.sid, data.get('nickname'), data.get('settings')
     if not nickname: print(f"[ERROR] Попытка создать игру без никнейма от {sid}"); return
     if is_player_busy(sid): print(f"[SECURITY] {nickname} ({sid}) уже занят, создание отклонено."); return
-    try: temp_game = GameState({'nickname': nickname}, all_leagues_data, mode='pvp', settings=settings)
+    try:
+        # --- ИЗМЕНЕНИЕ: Передаем 'pvp' в GameState ---
+        temp_game = GameState({'nickname': nickname}, all_leagues_data, mode='pvp', settings=settings)
     except Exception as e: print(f"[ERROR] Ошибка валидации настроек для {nickname}: {e}"); emit('create_game_fail', {'message': 'Ошибка настроек.'}); return
-    if temp_game.num_rounds < 3: print(f"[ERROR] {nickname} ({sid}) игра < 3 клубов."); emit('create_game_fail', {'message': 'Мин. 3 клуба.'}); return
+    
+    # --- ИЗМЕНЕНИЕ: Эта проверка все еще корректна, т.к. для pvp min=3 ---
+    # (Она сработает, если num_rounds=0 из-за пустой лиги)
+    if temp_game.num_rounds < 3: 
+        print(f"[ERROR] {nickname} ({sid}) pvp игра < 3 клубов (num_rounds: {temp_game.num_rounds})."); 
+        emit('create_game_fail', {'message': 'Мин. 3 клуба.'}); 
+        return
+    
     room_id = str(uuid.uuid4()); join_room(room_id); open_games[room_id] = {'creator': {'sid': sid, 'nickname': nickname}, 'settings': settings}
     remove_player_from_lobby(sid); print(f"[LOBBY] {nickname} ({sid}) создал {room_id}. Клубов: {temp_game.num_rounds}, ТБ: {settings.get('time_bank', 90)}")
     socketio.emit('update_lobby', get_lobby_data_list())

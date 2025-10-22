@@ -111,11 +111,11 @@
             <div id="tab-random" class="tab-content active">
                 <label for="random-clubs-slider" id="random-clubs-label">Количество клубов: 10</label>
                 <p style="font-size: 12px; color: #aaa;">Игра выберет указанное количество случайных клубов из лиги.</p>
-                <input type="range" id="random-clubs-slider" min="3" max="16" value="10" style="width: 100%;">
+                <input type="range" id="random-clubs-slider" min="1" max="16" value="10" style="width: 100%;">
             </div>
 
             <div id="tab-manual" class="tab-content">
-                <p style="font-size: 12px; color: #aaa;">Выберите от 3 до <span id="max-clubs-count">16</span> клубов для игры.</p>
+                 <p style="font-size: 12px; color: #aaa;">Выберите от <span id="min-clubs-text">3</span> до <span id="max-clubs-count">16</span> клубов для игры.</p>
                 <p id="manual-clubs-count" style="font-weight: bold;">Выбрано: 0</p>
                 <div id="clubs-selection-list"></div>
             </div>
@@ -210,7 +210,8 @@
 
             let localState = {
                 nickname: null, telegramId: null, currentRoomId: null,
-                myPlayerIndex: null, maxClubsInLeague: 16
+                myPlayerIndex: null, maxClubsInLeague: 16,
+                isTraining: false // <-- ИЗМЕНЕНИЕ: Добавлено состояние
             };
             let gameTimerInterval = null;
             let summaryCountdownInterval = null;
@@ -237,6 +238,7 @@
             const manualClubsCount = document.getElementById('manual-clubs-count');
             const settingsErrorMsg = document.getElementById('settings-error-msg');
             const maxClubsCountSpan = document.getElementById('max-clubs-count');
+            const minClubsTextSpan = document.getElementById('min-clubs-text'); // <-- ИЗМЕНЕНИЕ: Добавлено
             const openGamesList = document.getElementById('open-games-list');
             const summaryListContainer = document.getElementById('summary-list-container');
             const gameOverBackBtn = document.getElementById('game-over-back-btn');
@@ -542,7 +544,9 @@
                 socket.emit('surrender_round', { roomId: localState.currentRoomId });
             });
 
+            // --- ИЗМЕНЕНИЕ: Логика мин. клубов ---
             function openSettings(isTraining) {
+                localState.isTraining = isTraining; // <-- Сохраняем режим
                 settingsTitle.textContent = isTraining ? 'Настройки Тренировки' : 'Настройки PvP Игры';
                 confirmTrainingBtn.style.display = isTraining ? 'block' : 'none';
                 confirmCreateBtn.style.display = isTraining ? 'none' : 'block';
@@ -550,9 +554,21 @@
                 tabContents.forEach(content => content.classList.remove('active'));
                 document.querySelector('.tab-btn[data-tab="random"]').classList.add('active');
                 document.getElementById('tab-random').classList.add('active');
+
+                const minClubs = isTraining ? 1 : 3;
+                minClubsTextSpan.textContent = minClubs; // <-- Обновляем текст
+                randomClubsSlider.min = minClubs; // <-- Обновляем min слайдера
+
+                // Обновляем значение по умолчанию
+                const defaultValue = Math.max(minClubs, Math.min(10, localState.maxClubsInLeague));
+                randomClubsSlider.value = defaultValue;
+                randomClubsLabel.textContent = `Количество клубов: ${defaultValue}`;
+                
                 socket.emit('get_league_clubs', { league: document.getElementById('league-select').value });
                 showScreen('settings');
             }
+            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
             tabButtons.forEach(button => {
                 button.addEventListener('click', () => {
                     tabButtons.forEach(btn => btn.classList.remove('active'));
@@ -562,12 +578,19 @@
                     validateSettings();
                 });
             });
+
+            // --- ИЗМЕНЕНИЕ: Логика мин. клубов при загрузке данных ---
             socket.on('league_clubs_data', (data) => {
                 localState.maxClubsInLeague = data.clubs.length;
                 randomClubsSlider.max = localState.maxClubsInLeague;
-                const defaultValue = Math.min(10, localState.maxClubsInLeague);
+
+                const minClubs = localState.isTraining ? 1 : 3; // <-- Проверяем режим
+                randomClubsSlider.min = minClubs; // <-- Устанавливаем min
+
+                const defaultValue = Math.max(minClubs, Math.min(10, localState.maxClubsInLeague)); // <-- Корректное значение по умолч.
                 randomClubsSlider.value = defaultValue;
                 randomClubsLabel.textContent = `Количество клубов: ${defaultValue}`;
+                
                 maxClubsCountSpan.textContent = localState.maxClubsInLeague;
                 clubsSelectionList.innerHTML = '';
                 data.clubs.forEach(club => {
@@ -575,6 +598,8 @@
                 });
                 validateSettings();
             });
+            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
             randomClubsSlider.addEventListener('input', () => {
                 randomClubsLabel.textContent = `Количество клубов: ${randomClubsSlider.value}`;
                 validateSettings();
@@ -582,21 +607,33 @@
             clubsSelectionList.addEventListener('change', (e) => {
                 if (e.target.type === 'checkbox') validateSettings();
             });
+
+            // --- ИЗМЕНЕНИЕ: Логика валидации ---
             function validateSettings() {
+                const minClubs = localState.isTraining ? 1 : 3; // <-- Получаем min
                 const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
-                let isValid = false; let error = "";
+                let isValid = false; 
+                let error = "";
+                
                 if (activeTab === 'random') {
                     const count = parseInt(randomClubsSlider.value, 10);
-                    if (count < 3) error = "Нужно выбрать минимум 3 клуба."; else isValid = true;
+                    // --- Используем minClubs ---
+                    if (count < minClubs) error = `Нужно выбрать минимум ${minClubs} ${minClubs === 1 ? 'клуб' : 'клуба'}.`;
+                    else isValid = true;
                 } else if (activeTab === 'manual') {
                     const checkedCount = document.querySelectorAll('#clubs-selection-list input:checked').length;
                     manualClubsCount.textContent = `Выбрано: ${checkedCount}`;
-                    if (checkedCount < 3) error = `Нужно выбрать минимум 3 клуба (выбрано ${checkedCount}).`; else isValid = true;
+                    // --- Используем minClubs ---
+                    if (checkedCount < minClubs) error = `Нужно выбрать минимум ${minClubs} ${minClubs === 1 ? 'клуб' : 'клуба'} (выбрано ${checkedCount}).`;
+                    else isValid = true;
                 }
+                
                 settingsErrorMsg.textContent = error;
                 confirmCreateBtn.disabled = !isValid;
                 confirmTrainingBtn.disabled = !isValid;
             }
+            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
             function handleCreateGame(isTraining) {
                 const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
                 let settings = { league: document.getElementById('league-select').value, time_bank: parseFloat(document.getElementById('time-bank-input').value), num_rounds: 0, selected_clubs: [] };
@@ -617,7 +654,7 @@
                     let clubsText = ''; const settings = game.settings;
                     if (settings.selected_clubs && settings.selected_clubs.length > 0) clubsText = `Клубы: ${settings.selected_clubs.join(', ')}`;
                     else if (settings.num_rounds && settings.num_rounds > 0) clubsText = `Случайные клубы: ${settings.num_rounds} шт.`; else clubsText = 'Все клубы лиги';
-                    let buttonHtml = (game.creator_sid === socket.id) ? `<button class="cancel-btn" data-creator-sid="${game.creator_sid}">Отменить</button>` : `<button class="join-btn" data-creator-sid="${game.creator_sid}">Войти</button>`;
+                    let buttonHtml = (game.creator_sid === socket.id) ? `<button class="cancel-btn" data-creator-sid="${game.creator-sid}">Отменить</button>` : `<button class="join-btn" data-creator-sid="${game.creator_sid}">Войти</button>`;
                     openGamesList.innerHTML += `<div class="game-card"><div class="game-card-info"><p><strong>${game.creator_nickname}</strong> (${game.creator_rating})</p><p style="font-size:12px;">${clubsText}</p></div>${buttonHtml}</div>`;
                 });
             });
