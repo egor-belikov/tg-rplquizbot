@@ -271,7 +271,6 @@ def start_game_loop(r_id):
                     outcome = 0.0
 
                 with app.app_context():
-                    # --- НАЧАЛО ИСПРАВЛЕНИЯ (ОШИБКА 1: IF/ELSE ЛОГИКА) ---
                     p1_r = db.session.get(User, p1_id)
                     p2_r = db.session.get(User, p2_id)
                     if p1_r and p2_r: 
@@ -285,7 +284,6 @@ def start_game_loop(r_id):
                     else: 
                         print(f"[ERROR] {r_id}: Не удалось перезапросить для обновления рейтинга.")
                         p1_new_r, p2_new_r = p1_old_r, p2_old_r
-                    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
                 go_data['rating_changes'] = { '0': {'nickname': game.players[0]['nickname'], 'old': p1_old_r, 'new': p1_new_r if p1_new_r is not None else p1_old_r}, '1': {'nickname': game.players[1]['nickname'], 'old': p2_old_r, 'new': p2_new_r if p2_new_r is not None else p2_old_r} }; socketio.emit('leaderboard_data', get_leaderboard_data())
             else: print(f"[ERROR] {r_id}: Рейтинги НЕ обновлены.")
@@ -362,9 +360,16 @@ def validate_telegram_data(init_data_str):
     try:
         unquoted = unquote(init_data_str); params_list = unquoted.split('&'); params_dict = {k: v for k, v in [item.split('=', 1) for item in params_list if '=' in item]}; sorted_keys = sorted(params_dict.keys())
         rcv_hash = params_dict.get('hash', ''); check_list = []; user_val = None
-        for key in sorted_keys: v = params_dict[key];
-        if key != 'hash': check_list.append(f"{key}={v}");
-        if key == 'user': user_val = v
+        
+        # --- НАЧАЛО ИСПРАВЛЕНИЯ (ОШИБКА АУТЕНТИФИКАЦИИ) ---
+        for key in sorted_keys: 
+            v = params_dict[key]
+            if key != 'hash': 
+                check_list.append(f"{key}={v}")
+            if key == 'user': 
+                user_val = v
+        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
         check_str = "\n".join(check_list); secret = hmac.new("WebAppData".encode(), TELEGRAM_BOT_TOKEN.encode(), hashlib.sha256).digest()
         calc_hash = hmac.new(secret, check_str.encode(), hashlib.sha256).hexdigest()
         if calc_hash == rcv_hash:
@@ -421,7 +426,7 @@ def handle_start_game(data):
     if not nick: print(f"[ERROR] Start game no nickname {sid}"); return;
     if is_player_busy(sid): print(f"[SECURITY] {nick} ({sid}) busy, start rejected."); return
     
-    r_id = None # Определяем r_id до блока try
+    r_id = None 
     p1_info = None
     
     if mode == 'solo': 
@@ -432,7 +437,6 @@ def handle_start_game(data):
         emit('start_game_fail', {'message': 'Неизвестный режим.'})
         return
 
-    # --- НАЧАЛО ИСПРАВЛЕНИЯ (ОШИБКА 2: TRY/EXCEPT) ---
     try: 
         game = GameState(p1_info, all_leagues_data, mode='solo', settings=settings)
         
@@ -451,13 +455,12 @@ def handle_start_game(data):
     
     except Exception as e: 
         print(f"[ERROR] Solo creation failed {nick}: {e}")
-        if r_id: # Проверяем, что r_id был создан
+        if r_id: 
             leave_room(r_id, sid=sid)
             if r_id in active_games: 
                 del active_games[r_id]
-        add_player_to_lobby(sid) # Возвращаем игрока в лобби при ошибке
+        add_player_to_lobby(sid) 
         emit('start_game_fail', {'message': 'Ошибка сервера.'})
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 @socketio.on('create_game')
 def handle_create_game(data):
@@ -465,7 +468,6 @@ def handle_create_game(data):
     if not nick: print(f"[ERROR] Create game no nickname {sid}"); return;
     if is_player_busy(sid): print(f"[SECURITY] {nick} ({sid}) busy, create rejected."); return
     
-    # --- НАЧАЛО ИСПРАВЛЕНИЯ (ОШИБКА 2: TRY/EXCEPT) ---
     try: 
         temp_game = GameState({'nickname': nick}, all_leagues_data, mode='pvp', settings=settings)
         if temp_game.num_rounds < 3: 
@@ -483,7 +485,6 @@ def handle_create_game(data):
     except Exception as e: 
         print(f"[ERROR] Settings validation failed {nick}: {e}")
         emit('create_game_fail', {'message': 'Ошибка настроек.'})
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 @socketio.on('cancel_game')
 def handle_cancel_game():
@@ -505,7 +506,7 @@ def handle_join_game(data):
     
     if c_info['sid'] == j_sid: 
         print(f"[SECURITY] {j_nick} joined own game {r_id}.")
-        open_games[r_id] = g_join # Вернуть игру обратно, т.к. вышли
+        open_games[r_id] = g_join 
         socketio.emit('update_lobby', get_lobby_data_list())
         return
         
@@ -513,7 +514,6 @@ def handle_join_game(data):
     join_room(r_id, sid=p2['sid'])
     remove_player_from_lobby(p2['sid'])
     
-    # --- НАЧАЛО ИСПРАВЛЕНИЯ (ОШИБКА 2: TRY/EXCEPT) ---
     try: 
         game = GameState(p1, all_leagues_data, p2, 'pvp', g_join['settings'])
         active_games[r_id] = {'game': game, 'turn_id': None, 'pause_id': None, 'skip_votes': set(), 'last_round_end_reason': None}
@@ -528,12 +528,10 @@ def handle_join_game(data):
         if r_id in active_games: 
             del active_games[r_id]
         
-        # Возвращаем игроков в лобби при ошибке
         add_player_to_lobby(p1['sid'])
         add_player_to_lobby(p2['sid'])
         emit('join_game_fail', {'message': 'Ошибка сервера.'}, room=p1['sid'])
         emit('join_game_fail', {'message': 'Ошибка сервера.'}, room=p2['sid'])
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 @socketio.on('submit_guess')
 def handle_submit_guess(data):
