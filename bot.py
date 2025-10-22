@@ -20,7 +20,6 @@ if not TOKEN:
 
 WEB_APP_URL = "https://t.me/rplquizbot/rplquizbot"
 
-# --- ИСПРАВЛЕНИЕ 1: ТЕКСТ ПЕРЕПИСАН НА HTML ---
 WELCOME_TEXT = """Привет, фанат футбола! ⚽️
 
 Добро пожаловать в <b>RPL QuizBot</b> — главную викторину по Российской Премьер-Лиге!
@@ -54,32 +53,19 @@ WELCOME_TEXT = """Привет, фанат футбола! ⚽️
 # Инициализируем бота и диспетчер
 dp = Dispatcher()
 
-# --- ИСПРАВЛЕНИЕ 2: МЕНЯЕМ PARSEMODE НА HTML ---
 bot = Bot(
     TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML) # <-- БЫЛО MARKDOWN
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-
 
 # --- Обработчик команды /start ---
-
 @dp.message(CommandStart())
 async def command_start_handler(message: Message) -> None:
-    """
-    Этот обработчик ловит команду /start
-    и отправляет приветствие с инлайн-кнопкой Web App.
-    """
-    # Создаем билдер для клавиатуры
     builder = InlineKeyboardBuilder()
-    
-    # Добавляем кнопку, которая открывает Web App
     builder.button(
         text="🚀 Начать игру!", 
         web_app=WebAppInfo(url=WEB_APP_URL)
     )
-    
-    # Отправляем сообщение
     await message.answer(
         WELCOME_TEXT,
         reply_markup=builder.as_markup()
@@ -87,29 +73,25 @@ async def command_start_handler(message: Message) -> None:
 
 @dp.message()
 async def any_text_handler(message: Message):
-    """
-    Ловит любой другой текст и вежливо напоминает, 
-    как запустить игру.
-    """
-    # Создаем билдер для клавиатуры
     builder = InlineKeyboardBuilder()
     builder.button(
         text="🚀 Запустить игру", 
         web_app=WebAppInfo(url=WEB_APP_URL)
     )
-    
     await message.answer(
         text="Я не общаюсь в чате, моя задача — запускать игру-викторину.\n\nНажми кнопку ниже, чтобы начать 👇",
         reply_markup=builder.as_markup()
     )
 
 # --- Функция запуска бота ---
-
 async def main() -> None:
-    # Запускаем бота (polling - он будет сам опрашивать Telegram о новых сообщениях)
     print("Запускаю бота...")
-    # Удаляем любые "подвисшие" обновления перед стартом
-    await bot.delete_webhook(drop_pending_updates=True)
+    
+    # --- ИСПРАВЛЕНИЕ: УБИРАЕМ ПРОБЛЕМНУЮ СТРОКУ ---
+    # Убираем этот вызов, так как он вызывает TimeoutError на Koyeb
+    # await bot.delete_webhook(drop_pending_updates=True) 
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
