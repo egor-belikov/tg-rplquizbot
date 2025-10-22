@@ -202,6 +202,8 @@
             const namedPlayersList0 = document.getElementById('named-players-list-0');
             const namedPlayersList1 = document.getElementById('named-players-list-1');
             const lobbyStatsEl = document.getElementById('lobby-stats');
+            // --- ИЗМЕНЕНИЕ: Нашли элемент для уведомлений ---
+            const guessResultMsg = document.getElementById('guess-result-msg');
 
             summaryListContainer.addEventListener('scroll', () => { const w = summaryListContainer.parentElement; w.classList.toggle('scrolled-to-bottom', summaryListContainer.scrollHeight - summaryListContainer.scrollTop <= summaryListContainer.clientHeight + 1); });
             gameOverBackBtn.addEventListener('click', () => showScreen('lobby'));
@@ -226,7 +228,6 @@
                 } else { document.getElementById('nickname-error').textContent = data.message || 'Ошибка.'; }
             });
 
-            // --- ИЗМЕНЕНИЕ: Синхронизированный таймер паузы ---
             socket.on('round_summary', (data) => {
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
                 if (summaryTimerInterval) clearInterval(summaryTimerInterval);
@@ -251,7 +252,7 @@
 
                 const buttonText = localState.isLastRound ? 'К итогам игры' : 'Следующий раунд';
                 skipPauseBtn.textContent = buttonText;
-                skipPauseBtn.disabled = false;
+                skipPauseBtn.disabled = false; // --- ИЗМЕНЕНИЕ: Сбрасываем кнопку при новом раунде
 
                 showScreen('summary');
 
@@ -265,16 +266,24 @@
                 updateCountdown();
                 summaryTimerInterval = setInterval(updateCountdown, 1000);
             });
-            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
+            // --- ИЗМЕНЕНИЕ: Логика кнопки "Пропустить" ---
             skipPauseBtn.addEventListener('click', () => {
                 if (summaryTimerInterval) { clearInterval(summaryTimerInterval); summaryTimerInterval = null; }
+                // Не блокируем кнопку сразу, ждем ответа от сервера
                 socket.emit('request_skip_pause', { roomId: localState.currentRoomId });
-                skipPauseBtn.disabled = true; skipPauseBtn.textContent = 'Ожидаем...';
+            });
+
+            // --- ИЗМЕНЕНИЕ: Новый обработчик подтверждения голоса ---
+            socket.on('skip_vote_accepted', () => {
+                // Сервер подтвердил получение голоса, теперь блокируем кнопку
+                skipPauseBtn.disabled = true;
+                skipPauseBtn.textContent = 'Голос принят...';
             });
 
             socket.on('skip_vote_update', (data) => {
                 const baseButtonText = localState.isLastRound ? 'К итогам игры' : 'Следующий раунд';
+                // Обновляем текст (кнопка уже должна быть заблокирована, если мы голосовали)
                 skipPauseBtn.textContent = `${baseButtonText} (${data.count}/2)`;
             });
 
@@ -363,10 +372,12 @@
                     document.getElementById('submit-guess-btn').disabled = !isMyActualTurn;
                     document.getElementById('surrender-btn').disabled = !isMyActualTurn;
                 }
-                document.getElementById('guess-result-msg').textContent = '';
+                // --- ИЗМЕНЕНИЕ: Очищаем сообщение об ответе при обновлении хода ---
+                if (guessResultMsg) {
+                    guessResultMsg.textContent = '';
+                }
             }
 
-            // --- ИЗМЕНЕНИЕ: Исправлена логика getRoundOutcomeText ---
             function getRoundOutcomeText(round, p0_nick, p1_nick) {
                 const reason = round.result_type;
                 const winnerIndex = round.winner_index; // 0, 1 или 'draw'
@@ -387,11 +398,9 @@
                          return `Победил ${winnerNick} ${reasonText}`;
                     }
                 }
-                // На всякий случай, если что-то пошло не так
                 console.warn("Не удалось определить исход раунда:", round);
                 return 'н/д';
             }
-            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
             socket.on('game_over', (data) => {
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
@@ -406,7 +415,11 @@
                 const myFinalScore = data.final_scores[myOriginalIndex] || 0;
                 const opponentFinalScore = (opponentOriginalIndex !== -1) ? (data.final_scores[opponentOriginalIndex] || 0) : 0;
                 document.getElementById('game-over-score').textContent = `Счет ${myFinalScore} - ${opponentFinalScore}`;
-                document.getElementById('game-over-reason').textContent = getEndReasonText(data.end_reason);
+                
+                // --- ИЗМЕНЕНИЕ: Убран вызов getEndReasonText ---
+                const endReasonText = { 'normal': 'Игра завершена по кол-ву раундов.', 'unreachable_score': 'Счет стал недосягаемым.' };
+                document.getElementById('game-over-reason').textContent = endReasonText[data.end_reason] || 'Игра завершена.';
+                // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
                 let ratingText = '';
                 if (data.mode === 'solo') { ratingText = 'Рейтинг в тренировке не меняется.'; }
@@ -430,10 +443,42 @@
 
             socket.on('turn_updated', (state) => { updateGameUI(state); });
 
+            // --- ИЗМЕНЕНИЕ: Восстановлена логика уведомлений ---
             socket.on('guess_result', (data) => {
-                if (!localState.isSpectating) { /* ... отображение результата ... */ }
-                // Обновление списка названных происходит через 'turn_updated'
+                // Больше нет проверки !localState.isSpectating
+                let msg = '';
+                let color = 'var(--text-color)';
+
+                if (data.result === 'correct') {
+                    msg = '✅ Верно!';
+                    color = 'var(--correct-color)';
+                } else if (data.result === 'correct_typo') {
+                    msg = `✅ Верно! (${data.corrected_name})`; 
+                    color = 'var(--correct-color)';
+                } else if (data.result === 'already_named') {
+                    msg = '🟡 Уже назван';
+                    color = 'var(--accent-hover-color)'; 
+                } else if (data.result === 'not_found') {
+                    msg = '❌ Неверно';
+                    color = 'var(--incorrect-color)';
+                }
+                
+                if (guessResultMsg) {
+                    guessResultMsg.textContent = msg;
+                    guessResultMsg.style.color = color;
+                }
+
+                // Очищаем сообщение о *неправильном* ответе через 2 секунды
+                if (data.result === 'already_named' || data.result === 'not_found') {
+                    setTimeout(() => {
+                        if (guessResultMsg && guessResultMsg.textContent === msg) {
+                            guessResultMsg.textContent = '';
+                        }
+                    }, 2000);
+                }
+                // Сообщение о *правильном* ответе будет очищено следующим 'turn_updated'
             });
+            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
             socket.on('spectator_update', (data) => { spectatorInfo.textContent = data.text || ''; });
 
@@ -491,7 +536,6 @@
                 if (e.target.classList.contains('watch-btn')) socket.emit('join_as_spectator', { roomId: e.target.getAttribute('data-room-id'), nickname: localState.nickname });
             });
 
-            // --- ИЗМЕНЕНИЕ: Обновление лобби (два списка + тайм-банк) ---
             socket.on('update_lobby', (data) => {
                 const openGames = data.open_games || [];
                 const activeGames = data.active_games || [];
@@ -510,16 +554,13 @@
                     activeGamesList.innerHTML += `<div class="game-card"><div class="game-card-info"><p><strong>${game.player1_nickname}</strong> vs <strong>${game.player2_nickname}</strong></p><p class="spectators">👀 ${game.spectator_count}</p></div><button class="watch-btn" data-room-id="${game.roomId}">Смотреть</button></div>`;
                 });
             });
-            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
-
-            // --- ИЗМЕНЕНИЕ: Обновление статистики в лобби ---
+            
             socket.on('lobby_stats_update', (stats) => {
                  lobbyStatsEl.innerHTML = `
                     В лобби: ${stats.players_in_lobby} | В PvP: ${stats.players_in_pvp}<br>
                     Тренировка: ${stats.players_training} | Зрители: ${stats.players_spectating}
                  `;
             });
-            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
             socket.on('spectate_success', (data) => { localState.isSpectating = true; localState.currentRoomId = data.roomId; /* showScreen('game') вызовется в round_started */ });
             socket.on('spectate_fail', (data) => { alert(`Ошибка: ${data.message}`); });
