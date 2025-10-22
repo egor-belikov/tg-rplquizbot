@@ -30,8 +30,9 @@
         .game-card-info p { margin: 4px 0; }
         #settings-screen .container { text-align: left; }
         #game-screen .game-header { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 15px; }
-        .player-info { padding: 5px; border-radius: 4px; }
-        .player-info.active { box-shadow: 0 2px 0 var(--accent-color); }
+        .player-info { padding: 5px; border-radius: 4px; border-bottom: 2px solid transparent; /* Заменили тень */ padding-bottom: 3px; /* Компенсация высоты */}
+        .player-info.active { border-bottom: 2px solid var(--accent-color); /* Заменили тень */ }
+        .player-info .score { margin-top: 4px; /* Добавили отступ для счета */ }
         #named-players-list { list-style: none; padding: 0; max-height: 40vh; overflow-y: auto; margin: 15px 0; text-align: left; }
         #leaderboard-screen table, #game-over-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         #leaderboard-screen th, #leaderboard-screen td, #game-over-table th, #game-over-table td { padding: 10px; border-bottom: 1px solid var(--secondary-color); text-align: left; }
@@ -115,7 +116,7 @@
             </div>
 
             <div id="tab-manual" class="tab-content">
-                 <p style="font-size: 12px; color: #aaa;">Выберите от <span id="min-clubs-text">3</span> до <span id="max-clubs-count">16</span> клубов для игры.</p>
+                <p style="font-size: 12px; color: #aaa;">Выберите от <span id="min-clubs-text">3</span> до <span id="max-clubs-count">16</span> клубов для игры.</p>
                 <p id="manual-clubs-count" style="font-weight: bold;">Выбрано: 0</p>
                 <div id="clubs-selection-list"></div>
             </div>
@@ -211,7 +212,8 @@
             let localState = {
                 nickname: null, telegramId: null, currentRoomId: null,
                 myPlayerIndex: null, maxClubsInLeague: 16,
-                isTraining: false // <-- ИЗМЕНЕНИЕ: Добавлено состояние
+                isTraining: false,
+                isLastRound: false // <-- ИЗМЕНЕНИЕ: Добавлено состояние
             };
             let gameTimerInterval = null;
             let summaryCountdownInterval = null;
@@ -238,11 +240,12 @@
             const manualClubsCount = document.getElementById('manual-clubs-count');
             const settingsErrorMsg = document.getElementById('settings-error-msg');
             const maxClubsCountSpan = document.getElementById('max-clubs-count');
-            const minClubsTextSpan = document.getElementById('min-clubs-text'); // <-- ИЗМЕНЕНИЕ: Добавлено
+            const minClubsTextSpan = document.getElementById('min-clubs-text');
             const openGamesList = document.getElementById('open-games-list');
             const summaryListContainer = document.getElementById('summary-list-container');
             const gameOverBackBtn = document.getElementById('game-over-back-btn');
             const summaryCountdownDisplay = document.getElementById('summary-countdown');
+            const skipPauseBtn = document.getElementById('skip-pause-btn'); // <-- Получаем кнопку
 
 
             summaryListContainer.addEventListener('scroll', () => {
@@ -254,7 +257,6 @@
             gameOverBackBtn.addEventListener('click', () => showScreen('lobby'));
 
             function showScreen(screenName) {
-                // Очищаем таймер summary ПЕРЕД сменой экрана
                 if (summaryCountdownInterval) {
                     clearInterval(summaryCountdownInterval);
                     summaryCountdownInterval = null;
@@ -263,8 +265,6 @@
                 Object.values(screens).forEach(screen => screen.classList.remove('active'));
                 screens[screenKey].classList.add('active');
             }
-
-            // --- ОБРАБОТЧИКИ СОБЫТИЙ ---
 
             socket.on('auth_request', () => tg.initData && socket.emit('login_with_telegram', { initData: tg.initData }));
             socket.on('request_nickname', (data) => { localState.telegramId = data.telegram_id; showScreen('nickname'); });
@@ -278,11 +278,9 @@
                 }
             });
 
-            // --- ИСПРАВЛЕНИЕ: ПОРЯДОК ЗАПУСКА ТАЙМЕРА ---
             socket.on('round_summary', (data) => {
-                // Очищаем старые таймеры
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
-                if (summaryCountdownInterval) clearInterval(summaryCountdownInterval); // Доп. очистка
+                if (summaryCountdownInterval) clearInterval(summaryCountdownInterval);
 
                 summaryListContainer.parentElement.classList.remove('scrolled-to-bottom');
                 summaryListContainer.scrollTop = 0;
@@ -309,21 +307,20 @@
                     summaryList.appendChild(li);
                 });
 
-                document.getElementById('skip-pause-btn').textContent = 'Следующий раунд';
-                document.getElementById('skip-pause-btn').disabled = false;
+                // --- ИЗМЕНЕНИЕ: Текст кнопки в зависимости от флага ---
+                const buttonText = localState.isLastRound ? 'К итогам игры' : 'Следующий раунд';
+                skipPauseBtn.textContent = buttonText;
+                skipPauseBtn.disabled = false;
+                // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
-                // --- СНАЧАЛА ПОКАЗЫВАЕМ ЭКРАН ---
                 showScreen('summary');
 
-                // --- ПОТОМ ЗАПУСКАЕМ ТАЙМЕР (ЧЕРЕЗ setTimeout) ---
                 setTimeout(() => {
-                    let countdown = 10; // PAUSE_BETWEEN_ROUNDS
-                    // Проверяем, что мы все еще на экране summary (мало ли, вдруг уже ушли)
-                    if (screens.summary.classList.contains('active')) { 
+                    let countdown = 10;
+                    if (screens.summary.classList.contains('active')) {
                         summaryCountdownDisplay.textContent = countdown;
                         summaryCountdownInterval = setInterval(() => {
                             countdown--;
-                            // Обновляем только если все еще на экране
                             if (screens.summary.classList.contains('active')) {
                                 summaryCountdownDisplay.textContent = countdown;
                             }
@@ -331,29 +328,30 @@
                                 clearInterval(summaryCountdownInterval);
                                 summaryCountdownInterval = null;
                                 if (screens.summary.classList.contains('active')) {
-                                     summaryCountdownDisplay.textContent = "0"; 
+                                     summaryCountdownDisplay.textContent = "0";
                                 }
                             }
                         }, 1000);
                     }
-                }, 0); // Запускаем "сразу", но после отрисовки
+                }, 0);
             });
-            // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
-
-            document.getElementById('skip-pause-btn').addEventListener('click', () => {
+            skipPauseBtn.addEventListener('click', () => { // <-- Используем переменную
                 if (summaryCountdownInterval) {
                     clearInterval(summaryCountdownInterval);
                     summaryCountdownInterval = null;
                 }
                 socket.emit('request_skip_pause', { roomId: localState.currentRoomId });
-                document.getElementById('skip-pause-btn').disabled = true;
-                document.getElementById('skip-pause-btn').textContent = 'Ожидаем...';
+                skipPauseBtn.disabled = true; // <-- Используем переменную
+                skipPauseBtn.textContent = 'Ожидаем...'; // <-- Используем переменную
             });
 
+            // --- ИЗМЕНЕНИЕ: Формирование текста кнопки при голосовании ---
             socket.on('skip_vote_update', (data) => {
-                document.getElementById('skip-pause-btn').textContent = `Следующий раунд (${data.count}/2)`;
+                const baseButtonText = localState.isLastRound ? 'К итогам игры' : 'Следующий раунд';
+                skipPauseBtn.textContent = `${baseButtonText} (${data.count}/2)`;
             });
+            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
             socket.on('round_started', (state) => {
                 showScreen('game');
@@ -371,6 +369,10 @@
                     }
                 }
 
+                // --- ИЗМЕНЕНИЕ: Сохраняем флаг последнего раунда ---
+                localState.isLastRound = (state.round === state.totalRounds);
+                // --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
                 document.getElementById('round-info').textContent = `Раунд ${state.round}/${state.totalRounds}`;
                 document.getElementById('club-name-display').textContent = state.clubName;
 
@@ -383,7 +385,15 @@
 
                         const timeBankEl = playerInfoEl.querySelector('.time-bank');
                         let timeLeft = state.timeBanks[i] || 0;
-                        timeBankEl.textContent = `${timeLeft.toFixed(1)}с`;
+                        // --- ИЗМЕНЕНИЕ: Изначальная установка цвета и формата ---
+                        if (timeLeft < 20) {
+                            timeBankEl.style.color = 'var(--incorrect-color)';
+                            timeBankEl.textContent = `${timeLeft.toFixed(2)}с`;
+                        } else {
+                            timeBankEl.style.color = 'var(--text-color)';
+                            timeBankEl.textContent = `${timeLeft.toFixed(1)}с`;
+                        }
+                        // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
                         playerInfoEl.classList.toggle('active', i === state.currentPlayerIndex);
 
@@ -391,7 +401,17 @@
                             gameTimerInterval = setInterval(() => {
                                 timeLeft -= 0.1;
                                 if (timeLeft < 0) timeLeft = 0;
-                                timeBankEl.textContent = `${timeLeft.toFixed(1)}с`;
+
+                                // --- ИЗМЕНЕНИЕ: Установка цвета и формата в интервале ---
+                                if (timeLeft < 20) {
+                                    timeBankEl.style.color = 'var(--incorrect-color)';
+                                    timeBankEl.textContent = `${timeLeft.toFixed(2)}с`;
+                                } else {
+                                    timeBankEl.style.color = 'var(--text-color)'; // Сброс цвета
+                                    timeBankEl.textContent = `${timeLeft.toFixed(1)}с`;
+                                }
+                                // --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
                                 if (timeLeft <= 0) {
                                     clearInterval(gameTimerInterval);
                                 }
@@ -467,7 +487,6 @@
                 if (data.mode === 'solo') {
                     ratingText = 'Рейтинг в тренировке не меняется.';
                 } else if (data.rating_changes) {
-                    // Проверяем наличие ключей (на случай ошибки сервера)
                     const p1 = data.rating_changes['0'];
                     const p2 = data.rating_changes['1'];
                     if (p1 && p2) {
@@ -529,8 +548,7 @@
                 setTimeout(() => { msgEl.textContent = ''; }, 2000);
             });
 
-            // --- Остальной JS без изменений ---
-            // ... (auth, settings, lobby, etc.) ...
+            // --- Остальной JS ---
             const nicknameInput = document.getElementById('nickname-input');
             const submitNicknameBtn = document.getElementById('submit-nickname-btn');
             submitNicknameBtn.addEventListener('click', () => {
@@ -544,9 +562,8 @@
                 socket.emit('surrender_round', { roomId: localState.currentRoomId });
             });
 
-            // --- ИЗМЕНЕНИЕ: Логика мин. клубов ---
             function openSettings(isTraining) {
-                localState.isTraining = isTraining; // <-- Сохраняем режим
+                localState.isTraining = isTraining;
                 settingsTitle.textContent = isTraining ? 'Настройки Тренировки' : 'Настройки PvP Игры';
                 confirmTrainingBtn.style.display = isTraining ? 'block' : 'none';
                 confirmCreateBtn.style.display = isTraining ? 'none' : 'block';
@@ -556,18 +573,16 @@
                 document.getElementById('tab-random').classList.add('active');
 
                 const minClubs = isTraining ? 1 : 3;
-                minClubsTextSpan.textContent = minClubs; // <-- Обновляем текст
-                randomClubsSlider.min = minClubs; // <-- Обновляем min слайдера
+                minClubsTextSpan.textContent = minClubs;
+                randomClubsSlider.min = minClubs;
 
-                // Обновляем значение по умолчанию
                 const defaultValue = Math.max(minClubs, Math.min(10, localState.maxClubsInLeague));
                 randomClubsSlider.value = defaultValue;
                 randomClubsLabel.textContent = `Количество клубов: ${defaultValue}`;
-                
+
                 socket.emit('get_league_clubs', { league: document.getElementById('league-select').value });
                 showScreen('settings');
             }
-            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
             tabButtons.forEach(button => {
                 button.addEventListener('click', () => {
@@ -579,18 +594,17 @@
                 });
             });
 
-            // --- ИЗМЕНЕНИЕ: Логика мин. клубов при загрузке данных ---
             socket.on('league_clubs_data', (data) => {
                 localState.maxClubsInLeague = data.clubs.length;
                 randomClubsSlider.max = localState.maxClubsInLeague;
 
-                const minClubs = localState.isTraining ? 1 : 3; // <-- Проверяем режим
-                randomClubsSlider.min = minClubs; // <-- Устанавливаем min
+                const minClubs = localState.isTraining ? 1 : 3;
+                randomClubsSlider.min = minClubs;
 
-                const defaultValue = Math.max(minClubs, Math.min(10, localState.maxClubsInLeague)); // <-- Корректное значение по умолч.
+                const defaultValue = Math.max(minClubs, Math.min(10, localState.maxClubsInLeague));
                 randomClubsSlider.value = defaultValue;
                 randomClubsLabel.textContent = `Количество клубов: ${defaultValue}`;
-                
+
                 maxClubsCountSpan.textContent = localState.maxClubsInLeague;
                 clubsSelectionList.innerHTML = '';
                 data.clubs.forEach(club => {
@@ -598,7 +612,6 @@
                 });
                 validateSettings();
             });
-            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
             randomClubsSlider.addEventListener('input', () => {
                 randomClubsLabel.textContent = `Количество клубов: ${randomClubsSlider.value}`;
@@ -608,31 +621,27 @@
                 if (e.target.type === 'checkbox') validateSettings();
             });
 
-            // --- ИЗМЕНЕНИЕ: Логика валидации ---
             function validateSettings() {
-                const minClubs = localState.isTraining ? 1 : 3; // <-- Получаем min
+                const minClubs = localState.isTraining ? 1 : 3;
                 const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
-                let isValid = false; 
+                let isValid = false;
                 let error = "";
-                
+
                 if (activeTab === 'random') {
                     const count = parseInt(randomClubsSlider.value, 10);
-                    // --- Используем minClubs ---
                     if (count < minClubs) error = `Нужно выбрать минимум ${minClubs} ${minClubs === 1 ? 'клуб' : 'клуба'}.`;
                     else isValid = true;
                 } else if (activeTab === 'manual') {
                     const checkedCount = document.querySelectorAll('#clubs-selection-list input:checked').length;
                     manualClubsCount.textContent = `Выбрано: ${checkedCount}`;
-                    // --- Используем minClubs ---
                     if (checkedCount < minClubs) error = `Нужно выбрать минимум ${minClubs} ${minClubs === 1 ? 'клуб' : 'клуба'} (выбрано ${checkedCount}).`;
                     else isValid = true;
                 }
-                
+
                 settingsErrorMsg.textContent = error;
                 confirmCreateBtn.disabled = !isValid;
                 confirmTrainingBtn.disabled = !isValid;
             }
-            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
             function handleCreateGame(isTraining) {
                 const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
@@ -654,7 +663,7 @@
                     let clubsText = ''; const settings = game.settings;
                     if (settings.selected_clubs && settings.selected_clubs.length > 0) clubsText = `Клубы: ${settings.selected_clubs.join(', ')}`;
                     else if (settings.num_rounds && settings.num_rounds > 0) clubsText = `Случайные клубы: ${settings.num_rounds} шт.`; else clubsText = 'Все клубы лиги';
-                    let buttonHtml = (game.creator_sid === socket.id) ? `<button class="cancel-btn" data-creator-sid="${game.creator-sid}">Отменить</button>` : `<button class="join-btn" data-creator-sid="${game.creator_sid}">Войти</button>`;
+                    let buttonHtml = (game.creator_sid === socket.id) ? `<button class="cancel-btn" data-creator-sid="${game.creator_sid}">Отменить</button>` : `<button class="join-btn" data-creator-sid="${game.creator_sid}">Войти</button>`;
                     openGamesList.innerHTML += `<div class="game-card"><div class="game-card-info"><p><strong>${game.creator_nickname}</strong> (${game.creator_rating})</p><p style="font-size:12px;">${clubsText}</p></div>${buttonHtml}</div>`;
                 });
             });
