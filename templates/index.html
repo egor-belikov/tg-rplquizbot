@@ -19,7 +19,7 @@
         button:hover { background-color: var(--accent-hover-color); }
         button:disabled { background-color: var(--secondary-color); cursor: not-allowed; }
         input[type="text"], input[type="number"], select { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid var(--secondary-color); background-color: var(--primary-color); color: var(--text-color); font-size: 16px; box-sizing: border-box; }
-        input[type="text"]:disabled { background-color: #222; }
+        input[type="text"]:disabled { background-color: #222; } /* Стиль для заблокированного инпута */
         .container { width: 100%; max-width: 600px; margin: 0 auto; text-align: center; }
         #loading-screen { justify-content: center; }
         .loader { border: 8px solid var(--secondary-color); border-top: 8px solid var(--accent-color); border-radius: 50%; width: 60px; height: 60px; animation: spin 1s linear infinite; }
@@ -33,14 +33,13 @@
         .player-info { padding: 5px; border-radius: 4px; }
         .player-info.active { box-shadow: 0 2px 0 var(--accent-color); }
         #named-players-list { list-style: none; padding: 0; max-height: 40vh; overflow-y: auto; margin: 15px 0; text-align: left; }
-        #leaderboard-screen table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        #leaderboard-screen th, #leaderboard-screen td { padding: 10px; border-bottom: 1px solid var(--secondary-color); text-align: left; }
+        #leaderboard-screen table, #game-over-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        #leaderboard-screen th, #leaderboard-screen td, #game-over-table th, #game-over-table td { padding: 10px; border-bottom: 1px solid var(--secondary-color); text-align: left; }
+        #game-over-table th { background-color: var(--primary-color); }
         
-        /* --- СТИЛИ ДЛЯ КНОПКИ ОТМЕНЫ --- */
         .cancel-btn { background-color: var(--cancel-color); }
         .cancel-btn:hover { background-color: #c45a54; }
 
-        /* --- СТИЛИ ДЛЯ ВКЛАДОК НАСТРОЕК --- */
         .tabs-container { display: flex; margin-bottom: 15px; }
         .tab-btn { flex: 1; padding: 10px; background-color: var(--primary-color); border: 1px solid var(--secondary-color); color: var(--text-color); cursor: pointer; border-radius: 0; }
         .tab-btn:first-child { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
@@ -52,24 +51,29 @@
         .club-item { display: block; text-align: left; margin: 5px 0; }
         #settings-error-msg { color: var(--incorrect-color); height: 20px; margin-top: 10px; }
 
-        /* --- ИСПРАВЛЕНИЕ: ДИЗАЙН КНОПОК НАСТРОЕК --- */
+        /* --- ИСПРАВЛЕНИЕ: ДИЗАЙН КНОПОК НАСТРОЕК (Request 4) --- */
         .button-row {
             display: flex;
+            gap: 10px; /* Расстояние между кнопками */
             margin-top: 20px;
         }
         .button-row button {
-            flex: 1; /* Каждая кнопка занимает 50% */
+            flex: 1; /* Кнопки делят пространство */
+            margin: 0; /* Убираем старый margin */
         }
         .secondary-btn {
             background-color: var(--secondary-color);
-            margin-right: 10px;
         }
         .secondary-btn:hover {
             background-color: #555;
         }
 
-        /* --- ИСПРАВЛЕНИЕ: ДИЗАЙН СПИСКА ИТОГОВ --- */
+        /* --- ИСПРАВЛЕНИЕ: ДИЗАЙН СПИСКА ИТОГОВ (Request 3) --- */
         #summary-screen .container { text-align: left; }
+        #summary-screen h2, #summary-screen h3, #summary-screen p { text-align: center; }
+        .summary-list-wrapper {
+            position: relative; /* Нужно для градиента */
+        }
         .summary-list-wrapper h4 { text-align: center; }
         #summary-list-container {
             position: relative;
@@ -79,17 +83,26 @@
             border-radius: 8px;
             padding: 10px;
             background-color: var(--primary-color);
+            -webkit-overflow-scrolling: touch; /* Плавный скролл на iOS */
         }
-        /* Градиент для подсказки о скролле */
-        #summary-list-container::after {
+        /* Градиент-подсказка о скролле */
+        .summary-list-wrapper::after {
             content: '';
             position: absolute;
-            bottom: 0;
-            left: 0;
-            right: 0;
+            bottom: 1px; /* 1px, чтобы быть внутри рамки */
+            left: 1px;
+            right: 1px;
             height: 30px; /* Высота затемнения */
             background: linear-gradient(to top, var(--primary-color) 0%, rgba(44, 44, 44, 0) 100%);
             pointer-events: none; /* Позволяет кликать/скроллить сквозь градиент */
+            border-bottom-left-radius: 8px; /* Повторяем радиус */
+            border-bottom-right-radius: 8px;
+            transition: opacity 0.3s; /* Плавное исчезновение */
+            opacity: 1;
+        }
+        /* Класс, который JS добавит при докрутке до низа */
+        .summary-list-wrapper.scrolled-to-bottom::after {
+            opacity: 0;
         }
         #summary-player-list {
             list-style: none;
@@ -97,6 +110,16 @@
             margin: 0;
             text-align: left;
         }
+        /* --- КОНЕЦ ИСПРАВЛЕНИЯ СТИЛЕЙ ИТОГОВ --- */
+
+        /* Стили для нового экрана Game Over */
+        #game-over-screen .container { text-align: left; }
+        #game-over-screen h2, #game-over-screen h3 { text-align: center; }
+        #game-over-score { font-size: 24px; font-weight: bold; text-align: center; }
+        #game-over-reason { text-align: center; font-style: italic; color: #aaa; }
+        #game-over-ratings { text-align: center; }
+        #game-over-back-btn { width: 100%; margin-top: 20px; }
+        
     </style>
 </head>
 <body>
@@ -141,7 +164,7 @@
                 <button id="confirm-create-game-btn" disabled>Создать PvP Игру</button>
                 <button id="confirm-training-btn" style="display: none;" disabled>Начать Тренировку</button>
             </div>
-            </div>
+        </div>
     </div>
     
     <div id="game-screen" class="screen">
@@ -162,12 +185,12 @@
 
     <div id="summary-screen" class="screen">
         <div class="container">
-            <h2 id="summary-title" style="text-align: center;">Раунд завершен!</h2>
-            <h3 id="summary-club-name" style="text-align: center;"></h3>
-            <p style="text-align: center;"><strong>Текущий счет: <span id="summary-score"></span></strong></p>
+            <h2 id="summary-title">Раунд завершен!</h2>
+            <h3 id="summary-club-name"></h3>
+            <p><strong>Текущий счет: <span id="summary-score"></span></strong></p>
             
             <div class="summary-list-wrapper">
-                <h4 style="text-align: center;">Весь состав:</h4>
+                <h4>Весь состав:</h4>
                 <div id="summary-list-container">
                     <ul id="summary-player-list">
                         </ul>
@@ -177,6 +200,7 @@
             <button id="skip-pause-btn" style="width: 100%; margin-top: 20px;">Следующий раунд</button>
         </div>
     </div>
+    
     <div id="leaderboard-screen" class="screen">
         <div class="container">
             <h2>Таблица Лидеров</h2>
@@ -188,6 +212,29 @@
         </div>
     </div>
 
+    <div id="game-over-screen" class="screen">
+        <div class="container">
+            <h2>Игра окончена!</h2>
+            <p id="game-over-score">Счет 0 - 0</p>
+            <p id="game-over-reason">Причина...</p>
+            <p id="game-over-ratings">Изменение рейтинга...</p>
+            
+            <h3>История раундов</h3>
+            <table id="game-over-table">
+                <thead>
+                    <tr>
+                        <th>Раунд</th>
+                        <th>Клуб</th>
+                        <th>Итог</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    </tbody>
+            </table>
+            
+            <button id="game-over-back-btn">В лобби</button>
+        </div>
+    </div>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
@@ -212,8 +259,10 @@
                 game: document.getElementById('game-screen'),
                 summary: document.getElementById('summary-screen'),
                 leaderboard: document.getElementById('leaderboard-screen'),
+                gameOver: document.getElementById('game-over-screen') // <-- НОВЫЙ ЭКРАН
             };
 
+            // --- Элементы управления ---
             const settingsTitle = document.getElementById('settings-title');
             const confirmCreateBtn = document.getElementById('confirm-create-game-btn');
             const confirmTrainingBtn = document.getElementById('confirm-training-btn');
@@ -226,11 +275,27 @@
             const settingsErrorMsg = document.getElementById('settings-error-msg');
             const maxClubsCountSpan = document.getElementById('max-clubs-count');
             const openGamesList = document.getElementById('open-games-list');
+            
+            // --- ИСПРАВЛЕНИЕ: Элементы для градиента и game over (Request 3, 2) ---
+            const summaryListContainer = document.getElementById('summary-list-container');
+            const gameOverBackBtn = document.getElementById('game-over-back-btn');
+
+            // --- ИСПРАВЛЕНИЕ: Слушатель скролла для градиента (Request 3) ---
+            summaryListContainer.addEventListener('scroll', () => {
+                const wrapper = summaryListContainer.parentElement;
+                // +1 для погрешности округления в браузерах
+                const isAtBottom = summaryListContainer.scrollHeight - summaryListContainer.scrollTop <= summaryListContainer.clientHeight + 1;
+                wrapper.classList.toggle('scrolled-to-bottom', isAtBottom);
+            });
+
+            // --- ИСПРАВЛЕНИЕ: Кнопка "В лобби" с экрана Game Over (Request 2) ---
+            gameOverBackBtn.addEventListener('click', () => showScreen('lobby'));
 
 
             function showScreen(screenName) {
+                const screenKey = Object.keys(screens).find(key => screens[key] === document.getElementById(`${screenName}-screen`)) || screenName;
                 Object.values(screens).forEach(screen => screen.classList.remove('active'));
-                screens[screenName].classList.add('active');
+                screens[screenKey].classList.add('active');
             }
 
             // --- ОБРАБОТЧИКИ СОБЫТИЙ ---
@@ -250,13 +315,16 @@
             socket.on('round_summary', (data) => {
                 if (gameTimerInterval) clearInterval(gameTimerInterval); 
                 
+                // --- ИСПРАВЛЕНИЕ: Сброс класса скролла (Request 3) ---
+                summaryListContainer.parentElement.classList.remove('scrolled-to-bottom');
+                summaryListContainer.scrollTop = 0; // Скролл вверх
+                
                 document.getElementById('summary-club-name').textContent = data.clubName;
                 const p1_score = data.scores[0] || 0;
                 const p2_score = data.scores[1] || 0;
                 document.getElementById('summary-score').textContent = `${p1_score} - ${p2_score}`;
 
                 const summaryList = document.getElementById('summary-player-list');
-                // --- ИСПРАВЛЕНИЕ: Очищаем только список, H4 теперь снаружи ---
                 summaryList.innerHTML = '';
                 
                 data.fullPlayerList.forEach(fullName => {
@@ -281,7 +349,7 @@
             document.getElementById('skip-pause-btn').addEventListener('click', () => {
                 socket.emit('request_skip_pause', { roomId: localState.currentRoomId });
                 document.getElementById('skip-pause-btn').disabled = true;
-                document.getElementById('skip-pause-btn').textContent = 'Ожидаем второго игрока...';
+                document.getElementById('skip-pause-btn').textContent = 'Ожидаем...';
             });
 
             socket.on('skip_vote_update', (data) => {
@@ -293,7 +361,7 @@
                 updateGameUI(state);
             });
             
-            // --- ИСПРАВЛЕНИЕ: ЛОГИКА ПОЛЯ ВВОДА ---
+            // --- ИСПРАВЛЕНИЕ: ЛОГИКА ПОЛЯ ВВОДА (Request 1) ---
             function updateGameUI(state) {
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
 
@@ -347,7 +415,6 @@
                 const myTurn = state.currentPlayerIndex === localState.myPlayerIndex;
                 const guessInput = document.getElementById('guess-input');
                 
-                // --- ИСПРАВЛЕНИЕ ЛОГИКИ ---
                 guessInput.disabled = false; // Поле ввода ВСЕГДА активно
                 if (myTurn) {
                     guessInput.placeholder = "Введите фамилию игрока";
@@ -357,27 +424,86 @@
                 }
                 document.getElementById('submit-guess-btn').disabled = !myTurn;
                 document.getElementById('surrender-btn').disabled = !myTurn;
-                // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
                 
                 document.getElementById('guess-result-msg').textContent = '';
             }
             // --- КОНЕЦ ИСПРАВЛЕННОЙ ФУНКЦИИ ---
 
+            // --- ИСПРАВЛЕНИЕ: ПОЛНОСТЬЮ ПЕРЕПИСАННЫЙ ОБРАБОТЧИК GAME OVER (Request 2) ---
+            
+            // Вспомогательная функция для перевода причин
+            function getEndReasonText(reason) {
+                if (reason === 'unreachable_score') return 'Игра завершена досрочно: счет недосягаемый.';
+                if (reason === 'normal') return 'Все раунды сыграны.';
+                return 'Игра окончена.'; // Фолбэк
+            }
+            
+            // Вспомогательная функция для таблицы раундов
+            function getRoundOutcomeText(round, p1_nick, p2_nick) {
+                switch (round.result_type) {
+                    case 'completed':
+                        return 'Ничья (все названы)';
+                    case 'surrender':
+                        return `Сдался: ${round.player_nickname}`;
+                    case 'timeout':
+                        return `Время вышло: ${round.player_nickname}`;
+                    default:
+                        return 'н/д';
+                }
+            }
+
             socket.on('game_over', (data) => {
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
-                let message = `Игра окончена!\nСчет: ${data.final_scores[0]} - ${data.final_scores[1] || 0}\n\n`;
-                if(data.rating_changes && localState.myPlayerIndex !== -1 && data.players[localState.myPlayerIndex]) {
-                    const myChangesKey = localState.myPlayerIndex === 0 ? 'p1' : 'p2';
-                    const myChanges = data.rating_changes[myChangesKey];
-                    const ratingDiff = myChanges.new - myChanges.old;
-                    message += `Ваш рейтинг: ${myChanges.new} (${ratingDiff >= 0 ? '+' : ''}${ratingDiff})`;
+                
+                const p1_nick = data.players[0].nickname;
+                const p2_nick = data.players[1] ? data.players[1].nickname : 'БОТ';
+                
+                // 1. Заполняем счет и причину
+                document.getElementById('game-over-score').textContent = `Счет ${data.final_scores[0]} - ${data.final_scores[1] || 0}`;
+                document.getElementById('game-over-reason').textContent = getEndReasonText(data.end_reason);
+
+                // 2. Заполняем рейтинги
+                let ratingText = 'Изменение рейтинга (Тренировка)';
+                if (data.rating_changes) {
+                    const p1 = data.rating_changes['0'];
+                    const p2 = data.rating_changes['1'];
+                    const p1_diff = p1.new - p1.old;
+                    const p2_diff = p2.new - p2.old;
+                    
+                    ratingText = `
+                        <b>${p1.nickname}:</b> ${p1.new} (${p1_diff >= 0 ? '+' : ''}${p1_diff})<br>
+                        <b>${p2.nickname}:</b> ${p2.new} (${p2_diff >= 0 ? '+' : ''}${p2_diff})
+                    `;
                 }
-                alert(message);
-                showScreen('lobby');
+                document.getElementById('game-over-ratings').innerHTML = ratingText;
+
+                // 3. Заполняем таблицу истории
+                const historyTable = document.querySelector('#game-over-table tbody');
+                historyTable.innerHTML = '';
+                
+                if (data.history && data.history.length > 0) {
+                    data.history.forEach((round, index) => {
+                        const tr = document.createElement('tr');
+                        const outcomeText = getRoundOutcomeText(round, p1_nick, p2_nick);
+                        
+                        tr.innerHTML = `
+                            <td>${index + 1}</td>
+                            <td>${round.club_name}</td>
+                            <td>${outcomeText}</td>
+                        `;
+                        historyTable.appendChild(tr);
+                    });
+                } else {
+                    historyTable.innerHTML = `<tr><td colspan="3">История раундов пуста.</td></tr>`;
+                }
+
+                // 4. Показываем экран
+                showScreen('gameOver');
             });
+            // --- КОНЕЦ НОВОГО ОБРАБОТЧИКА GAME OVER ---
 
             socket.on('turn_updated', (state) => {
-                console.log("Turn updated, redrawing UI");
+                // console.log("Turn updated, redrawing UI");
                 updateGameUI(state);
             });
 
@@ -418,7 +544,6 @@
                 confirmTrainingBtn.style.display = isTraining ? 'block' : 'none';
                 confirmCreateBtn.style.display = isTraining ? 'none' : 'block';
                 
-                // Сброс вкладок
                 tabButtons.forEach(btn => btn.classList.remove('active'));
                 tabContents.forEach(content => content.classList.remove('active'));
                 document.querySelector('.tab-btn[data-tab="random"]').classList.add('active');
