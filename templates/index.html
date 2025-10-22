@@ -483,13 +483,26 @@
                 }
             });
 
+            // --- ИСПРАВЛЕНИЕ: ИЗМЕНЕНА ЛОГИКА ОТОБРАЖЕНИЯ КАРТОЧКИ ---
             socket.on('update_lobby', (games) => {
                 openGamesList.innerHTML = games.length === 0 ? '<p>Нет доступных игр.</p>' : '';
                 games.forEach(game => {
-                    let clubsText = 'Все клубы лиги';
-                    if (game.selected_clubs_names && game.selected_clubs_names.length > 0) {
-                        clubsText = `Клубы: ${game.selected_clubs_names.join(', ')}`;
+                    
+                    // --- НОВАЯ ЛОГИКА ОПИСАНИЯ ---
+                    let clubsText = '';
+                    const settings = game.settings;
+                    
+                    if (settings.selected_clubs && settings.selected_clubs.length > 0) {
+                        // Режим "Выбрать вручную"
+                        clubsText = `Клубы: ${settings.selected_clubs.join(', ')}`;
+                    } else if (settings.num_rounds && settings.num_rounds > 0) {
+                        // Режим "Случайные клубы"
+                        clubsText = `Случайные клубы: ${settings.num_rounds} шт.`;
+                    } else {
+                        // Старый фолбэк (на всякий случай)
+                        clubsText = 'Все клубы лиги'; 
                     }
+                    // --- КОНЕЦ НОВОЙ ЛОГИКИ ---
 
                     // ОПРЕДЕЛЯЕМ ТИП КНОПКИ
                     let buttonHtml = '';
