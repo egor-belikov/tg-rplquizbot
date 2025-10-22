@@ -18,7 +18,12 @@ TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 if not TOKEN:
     raise ValueError("Необходимо установить переменную окружения TELEGRAM_BOT_TOKEN")
 
-WEB_APP_URL = "https://t.me/rplquizbot/rplquizbot"
+# --- ИСПРАВЛЕНИЕ: УКАЗЫВАЕМ ПРЯМОЙ URL СЕРВЕРА ---
+# Неправильно: "https://t.me/rplquizbot/rplquizbot" (это deep link для юзеров)
+# Правильно:
+WEB_APP_URL = "https://early-anallese-rplquizbot-4a7cc94e.koyeb.app"
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
 
 WELCOME_TEXT = """Привет, фанат футбола! ⚽️
 
@@ -87,10 +92,8 @@ async def any_text_handler(message: Message):
 async def main() -> None:
     print("Запускаю бота...")
     
-    # --- ИСПРАВЛЕНИЕ: УБИРАЕМ ПРОБЛЕМНУЮ СТРОКУ ---
     # Убираем этот вызов, так как он вызывает TimeoutError на Koyeb
     # await bot.delete_webhook(drop_pending_updates=True) 
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     await dp.start_polling(bot)
 
