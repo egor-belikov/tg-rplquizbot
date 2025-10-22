@@ -196,7 +196,7 @@
             tg.ready();
             tg.expand();
 
-            let localState = { nickname: null, telegramId: null, currentRoomId: null, myPlayerIndex: null, maxClubsInLeague: 16, isTraining: false, isLastRound: false, isSpectating: false };
+            let localState = { nickname: null, telegramId: null, currentRoomId: null, myPlayerIndex: null, maxClubsInLeague: 16, isTraining: false, isSpectating: false }; // Убрал isLastRound
             let gameTimerInterval = null;
             let summaryTimerInterval = null;
 
@@ -244,7 +244,6 @@
             socket.on('auth_request', () => tg.initData && socket.emit('login_with_telegram', { initData: tg.initData }));
             socket.on('request_nickname', (data) => { localState.telegramId = data.telegram_id; showScreen('nickname'); });
             
-            // --- ИЗМЕНЕНИЕ: Улучшенный обработчик auth_status ---
             socket.on('auth_status', (data) => {
                 if (data.success) {
                     localState.nickname = data.nickname;
@@ -252,20 +251,18 @@
                     socket.emit('get_lobby_data'); 
                     showScreen('lobby');
                 } else { 
-                    // Показываем ошибку в зависимости от текущего экрана
                     if (screens.loading.classList.contains('active')) {
-                        // Если мы на экране загрузки, показываем ошибку прямо там
                         screens.loading.querySelector('.loader').style.display = 'none';
                         screens.loading.querySelector('p').textContent = `Ошибка: ${data.message}`;
-                        socket.disconnect(); // Отключаем, так как войти не удалось
+                        // --- ИЗМЕНЕНИЕ: Не отключаем сокет, просто показываем ошибку ---
+                        // socket.disconnect(); 
                     } else {
-                        // Иначе, это ошибка на экране никнейма
                         document.getElementById('nickname-error').textContent = data.message || 'Ошибка.'; 
                     }
                 }
             });
-            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
+            // --- ИЗМЕНЕНИЕ: Логика кнопки и отображения для зрителей ---
             socket.on('round_summary', (data) => {
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
                 if (summaryTimerInterval) clearInterval(summaryTimerInterval);
@@ -276,6 +273,11 @@
                 document.getElementById('summary-club-name').textContent = data.clubName;
                 let myScore = data.scores[localState.myPlayerIndex] || 0;
                 let opponentScore = (data.mode !== 'solo') ? (data.scores[1 - localState.myPlayerIndex] || 0) : 0;
+                // Корректируем счет для зрителя
+                if (localState.isSpectating) {
+                    myScore = data.scores[0] || 0;
+                    opponentScore = data.scores[1] || 0;
+                }
                 document.getElementById('summary-score').textContent = `${myScore} - ${opponentScore}`;
 
                 const summaryList = document.getElementById('summary-player-list');
@@ -288,9 +290,18 @@
                     summaryList.appendChild(li);
                 });
 
-                const buttonText = localState.isLastRound ? 'К итогам игры' : 'Следующий раунд';
+                // Определяем текст кнопки
+                const isLastRound = data.currentRound === data.totalRounds;
+                const buttonText = isLastRound ? 'К итогам игры' : 'Следующий раунд';
                 skipPauseBtn.textContent = buttonText;
-                skipPauseBtn.disabled = false; 
+                
+                // Скрываем кнопку для зрителей, показываем для игроков
+                if (localState.isSpectating) {
+                    skipPauseBtn.style.display = 'none';
+                } else {
+                    skipPauseBtn.style.display = 'block';
+                    skipPauseBtn.disabled = false; // Сбрасываем блокировку при новом раунде
+                }
 
                 showScreen('summary');
 
@@ -304,6 +315,7 @@
                 updateCountdown();
                 summaryTimerInterval = setInterval(updateCountdown, 1000);
             });
+            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
             skipPauseBtn.addEventListener('click', () => {
                 if (summaryTimerInterval) { clearInterval(summaryTimerInterval); summaryTimerInterval = null; }
@@ -316,8 +328,8 @@
             });
 
             socket.on('skip_vote_update', (data) => {
-                const baseButtonText = localState.isLastRound ? 'К итогам игры' : 'Следующий раунд';
-                skipPauseBtn.textContent = `${baseButtonText} (${data.count}/2)`;
+                const buttonBaseText = (skipPauseBtn.textContent.includes('К итогам')) ? 'К итогам игры' : 'Следующий раунд';
+                skipPauseBtn.textContent = `${buttonBaseText} (${data.count}/2)`;
             });
 
             socket.on('round_started', (state) => {
@@ -331,7 +343,7 @@
                 localState.currentRoomId = state.roomId;
                 localState.myPlayerIndex = -1;
                 for (const i in state.players) { if (state.players[i].nickname === localState.nickname) { localState.myPlayerIndex = parseInt(i); break; } }
-                localState.isLastRound = (state.round === state.totalRounds);
+                // Убрал isLastRound, так как она теперь определяется в round_summary
                 localState.isSpectating = (localState.myPlayerIndex === -1);
 
                 gameControls.style.display = localState.isSpectating ? 'none' : 'block';
@@ -385,7 +397,7 @@
                     }, 100);
                 }
 
-                // --- ИЗМЕНЕНИЕ: Логика отображения колонок ---
+                // Логика отображения колонок
                 namedPlayersList0.innerHTML = ''; 
                 namedPlayersList1.innerHTML = '';
                 
@@ -402,20 +414,18 @@
 
                 if (state.mode === 'solo') {
                     namedPlayersList0.style.backgroundColor = 'var(--primary-color)';
-                    namedPlayersList1.style.display = 'none'; // Скрываем вторую колонку в соло
+                    namedPlayersList1.style.display = 'none'; 
                     namedPlayersList0.style.display = 'block';
                 } else {
-                    namedPlayersList1.style.display = 'block'; // Показываем обе в PvP
+                    namedPlayersList1.style.display = 'block'; 
                     namedPlayersList0.style.display = 'block';
                     
                     const emptyColor = 'var(--empty-column-color)';
                     const defaultColor = 'var(--primary-color)';
 
-                    // Показываем пустые колонки с другим цветом
                     namedPlayersList0.style.backgroundColor = p0_has_names ? defaultColor : emptyColor;
                     namedPlayersList1.style.backgroundColor = p1_has_names ? defaultColor : emptyColor;
                 }
-                // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 
                 const guessInput = document.getElementById('guess-input');
@@ -676,7 +686,7 @@
             document.getElementById('leaderboard-back-btn').addEventListener('click', () => showScreen('lobby'));
             socket.on('leaderboard_data', (data) => { const tbody = document.querySelector('#leaderboard-table tbody'); tbody.innerHTML = ''; data.forEach((u, i) => { tbody.innerHTML += `<tr><td>${i + 1}</td><td>${u.nickname}</td><td>${u.rating}</td><td>${u.games_played}</td></tr>`; }); });
             
-            // --- ИЗМЕНЕНИЕ: Убран обработчик 'force_disconnect' ---
+            // --- ИЗМЕНЕНИЕ: Убран 'force_disconnect' ---
             
             socket.on('opponent_disconnected', (data) => { alert(data.message || 'Соперник откл.'); if (gameTimerInterval) clearInterval(gameTimerInterval); if (summaryTimerInterval) clearInterval(summaryTimerInterval); localState.isSpectating = false; localState.currentRoomId = null; showScreen('lobby'); });
         });

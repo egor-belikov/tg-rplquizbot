@@ -418,7 +418,21 @@ def show_round_summary_and_schedule_next(room_id):
     game_session['last_round_end_player_nickname'] = None
     game_session['last_round_winner_index'] = None
     pause_end_time = time.time() + PAUSE_BETWEEN_ROUNDS
-    summary_data = { 'clubName': game.current_club_name, 'fullPlayerList': [p['full_name'] for p in game.players_for_comparison], 'namedPlayers': game.named_players, 'players': {i: {'nickname': p['nickname']} for i, p in game.players.items()}, 'scores': game.scores, 'mode': game.mode, 'pauseEndTime': pause_end_time }
+    
+    # --- ИЗМЕНЕНИЕ: Добавляем round/totalRounds в summary_data ---
+    summary_data = { 
+        'clubName': game.current_club_name, 
+        'fullPlayerList': [p['full_name'] for p in game.players_for_comparison], 
+        'namedPlayers': game.named_players, 
+        'players': {i: {'nickname': p['nickname']} for i, p in game.players.items()}, 
+        'scores': game.scores, 
+        'mode': game.mode, 
+        'pauseEndTime': pause_end_time,
+        'currentRound': game.current_round + 1, # Добавляем номер *завершенного* раунда (1-based)
+        'totalRounds': game.num_rounds        # Добавляем общее кол-во раундов
+    }
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
     socketio.emit('round_summary', summary_data, room=room_id)
     pause_id = f"pause_{room_id}_{game.current_round}"
     game_session['pause_id'] = pause_id
@@ -457,6 +471,10 @@ def emit_lobby_update():
     socketio.emit('update_lobby', {'open_games': open_games_list, 'active_games': active_games_list})
 
 # --- Обработчики Socket.IO ---
+# (Остальной код server.py без изменений...)
+# ... [handle_connect, handle_disconnect, validate_telegram_data, handle_telegram_login, handle_set_username, ...]
+# ... [handle_request_skip_pause, ..., handle_submit_guess, ..., index()]
+
 @socketio.on('connect')
 def handle_connect():
     sid = request.sid
@@ -470,9 +488,13 @@ def handle_disconnect():
     
     if sid in sid_to_tg_id:
         tg_id = sid_to_tg_id.pop(sid)
+        # --- ИЗМЕНЕНИЕ: Не удаляем tg_id_to_sid если sid не совпадает (т.е. новый уже подключился) ---
         if tg_id in tg_id_to_sid and tg_id_to_sid[tg_id] == sid:
             del tg_id_to_sid[tg_id]
             print(f"[AUTH] Cleaned up SID/TGID mapping for {tg_id}.")
+        else:
+            print(f"[AUTH] SID {sid} disconnected, but TGID {tg_id} already has a newer SID.")
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
     
     remove_player_from_lobby(sid)
     room_to_delete = next((rid for rid, g in open_games.items() if g['creator']['sid'] == sid), None)
@@ -586,10 +608,16 @@ def handle_telegram_login(data):
         if old_sid and old_sid != sid and socketio.server.manager.is_connected(old_sid, '/'):
             print(f"[AUTH] TG ID {tg_id} duplicate login attempt. Rejecting new SID: {sid}")
             # Отправляем алерт новой сессии и не даем войти
-            emit('auth_status', {'success': False, 'message': 'Активная сессия уже запущена с другого устройства. Пожалуйста, закройте ее, чтобы войти здесь.'})
+            emit('auth_status', {'success': False, 'message': 'Активная сессия уже запущена с другого устройства.'})
             return # Не продолжаем, не регистрируем новый sid
-    
+        # Если старая сессия "мертва" (нет в is_connected), то позволяем новой зайти
+        # и перезаписываем SID для этого TG_ID ниже.
+        elif old_sid and old_sid != sid:
+             print(f"[AUTH] TG ID {tg_id} has dead old SID {old_sid}. Allowing new SID {sid}.")
+
+
     # Если старой сессии нет, или она мертва, регистрируем новую
+    # (или перезаписываем старый мертвый sid)
     tg_id_to_sid[tg_id] = sid
     sid_to_tg_id[sid] = tg_id
     # --- КОНЕЦ ИЗМЕНЕНИЯ ---
@@ -617,18 +645,25 @@ def handle_set_username(data):
         emit('auth_status', {'success': False, 'message': 'Nick: 3-20 chars (a-z,0-9,_, -).'})
         return
     
-    if sid_to_tg_id.get(sid) != tg_id or tg_id_to_sid.get(tg_id) != sid:
+    # --- ИЗМЕНЕНИЕ: Убрана проверка tg_id_to_sid.get(tg_id) != sid, т.к. мы уже перезаписали ---
+    if sid_to_tg_id.get(sid) != tg_id:
          print(f"[AUTH] Mismatch SID/TGID on set_username. SID: {sid}, TG_ID: {tg_id}")
          emit('auth_status', {'success': False, 'message': 'Ошибка сессии, перезагрузите.'})
+         # Очищаем невалидные данные
+         if tg_id in tg_id_to_sid: del tg_id_to_sid[tg_id]
+         if sid in sid_to_tg_id: del sid_to_tg_id[sid]
          return
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
     with app.app_context():
         if User.query.filter_by(nickname=nick).first():
             emit('auth_status', {'success': False, 'message': 'Nickname taken.'})
             return
-        if User.query.filter_by(telegram_id=tg_id).first():
-            emit('auth_status', {'success': False, 'message': 'TG ID already registered.'})
-            return
+        # --- ИЗМЕНЕНИЕ: Не проверяем TG_ID в базе, т.к. юзер новый ---
+        # if User.query.filter_by(telegram_id=tg_id).first():
+        #     emit('auth_status', {'success': False, 'message': 'TG ID already registered.'})
+        #     return
+        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
         try:
             new_user = User(telegram_id=tg_id, nickname=nick)
             db.session.add(new_user)
@@ -929,10 +964,7 @@ def handle_submit_guess(data):
                 game_session['last_round_winner_index'] = 'draw'
             show_round_summary_and_schedule_next(room_id)
         else:
-            # --- ИЗМЕНЕНИЕ: Исправление бага с таймером ---
-            # Сбрасываем таймер и запускаем ход для следующего (или того же) игрока
             start_next_human_turn(room_id)
-            # --- КОНЕЦ ИЗМЕНЕНИЯ ---
     else:
         emit('guess_result', {'result': result['result']})
 
