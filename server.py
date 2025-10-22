@@ -436,7 +436,7 @@ def start_game_loop(room_id):
         print(f"[GAME_OVER] {room_id}: Игра окончена. Причина: {game.end_reason}, Счет: {game.scores.get(0, 0)}-{game.scores.get(1, 0)}")
 
         for player_index, player_info in game.players.items():
-            if player_info.get('sid') and player_info['sid'] != 'BOT' and socketio.server.manager.is_connected(player_info['sid']):
+            if player_info.get('sid') and player_info['sid'] != 'BOT' and socketio.server.manager.is_connected(player_info['sid'], '/'):
                  add_player_to_lobby(player_info['sid'])
 
         if game.mode == 'pvp' and len(game.players) > 1:
