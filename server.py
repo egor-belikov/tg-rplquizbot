@@ -58,9 +58,7 @@ with app.app_context():
 # Глобальные переменные для отслеживания состояния
 active_games, open_games = {}, {}
 lobby_sids = set()
-# --- ИЗМЕНЕНИЕ: Отслеживание сессий ---
 tg_id_to_sid, sid_to_tg_id = {}, {}
-# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 # --- Вспомогательные функции ---
 
@@ -470,14 +468,12 @@ def handle_disconnect():
     sid = request.sid
     print(f"[CONNECTION] Client disconnected: {sid}")
     
-    # --- ИЗМЕНЕНИЕ: Очистка карт сессий ---
     if sid in sid_to_tg_id:
         tg_id = sid_to_tg_id.pop(sid)
         if tg_id in tg_id_to_sid and tg_id_to_sid[tg_id] == sid:
             del tg_id_to_sid[tg_id]
             print(f"[AUTH] Cleaned up SID/TGID mapping for {tg_id}.")
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
-
+    
     remove_player_from_lobby(sid)
     room_to_delete = next((rid for rid, g in open_games.items() if g['creator']['sid'] == sid), None)
     if room_to_delete:
@@ -583,13 +579,17 @@ def handle_telegram_login(data):
         emit('auth_status', {'success': False, 'message': 'No TG ID.'})
         return
 
-    # --- ИЗМЕНЕНИЕ: Логика мульти-устройств ---
+    # --- ИЗМЕНЕНИЕ: Новая логика мульти-устройств ---
     if tg_id in tg_id_to_sid:
         old_sid = tg_id_to_sid.get(tg_id)
-        if old_sid and old_sid != sid:
-            print(f"[AUTH] TG ID {tg_id} duplicate login. Disconnecting old SID: {old_sid}")
-            socketio.emit('force_disconnect', {'message': 'Вы вошли с другого устройства.'}, room=old_sid)
-            socketio.disconnect(old_sid) # Это вызовет handle_disconnect для old_sid
+        # Проверяем, действительно ли старая сессия еще активна
+        if old_sid and old_sid != sid and socketio.server.manager.is_connected(old_sid, '/'):
+            print(f"[AUTH] TG ID {tg_id} duplicate login attempt. Rejecting new SID: {sid}")
+            # Отправляем алерт новой сессии и не даем войти
+            emit('auth_status', {'success': False, 'message': 'Активная сессия уже запущена с другого устройства. Пожалуйста, закройте ее, чтобы войти здесь.'})
+            return # Не продолжаем, не регистрируем новый sid
+    
+    # Если старой сессии нет, или она мертва, регистрируем новую
     tg_id_to_sid[tg_id] = sid
     sid_to_tg_id[sid] = tg_id
     # --- КОНЕЦ ИЗМЕНЕНИЯ ---
@@ -617,12 +617,10 @@ def handle_set_username(data):
         emit('auth_status', {'success': False, 'message': 'Nick: 3-20 chars (a-z,0-9,_, -).'})
         return
     
-    # --- ИЗМЕНЕНИЕ: Проверяем, что SID/TG_ID все еще совпадает ---
     if sid_to_tg_id.get(sid) != tg_id or tg_id_to_sid.get(tg_id) != sid:
          print(f"[AUTH] Mismatch SID/TGID on set_username. SID: {sid}, TG_ID: {tg_id}")
          emit('auth_status', {'success': False, 'message': 'Ошибка сессии, перезагрузите.'})
          return
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
     with app.app_context():
         if User.query.filter_by(nickname=nick).first():
@@ -640,10 +638,8 @@ def handle_set_username(data):
             emit('auth_status', {'success': True, 'nickname': new_user.nickname})
             emit_lobby_update()
         except Exception as e:
-            # --- ИЗМЕНЕНИЕ: Откат карт сессий при ошибке ---
             if tg_id in tg_id_to_sid: del tg_id_to_sid[tg_id]
             if sid in sid_to_tg_id: del sid_to_tg_id[sid]
-            # --- КОНЕЦ ИЗМЕНЕНИЯ ---
             db.session.rollback()
             print(f"[ERROR] Create user {nick}: {e}")
             emit('auth_status', {'success': False, 'message': 'Registration error.'})
@@ -799,14 +795,12 @@ def handle_join_game(data):
         print(f"[SECURITY] {joiner_nick} ({joiner_sid}) busy, join rejected.")
         return
     
-    # --- ИЗМЕНЕНИЕ: Проверка на игру с самим собой ---
     joiner_tg_id = sid_to_tg_id.get(joiner_sid)
     creator_tg_id = sid_to_tg_id.get(creator_sid)
     if joiner_tg_id and creator_tg_id and joiner_tg_id == creator_tg_id:
         print(f"[SECURITY] {joiner_nick} ({joiner_tg_id}) attempted to join own game.")
         emit('join_game_fail', {'message': 'Нельзя играть с самим собой.'})
         return
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
     room_id = next((rid for rid, g in open_games.items() if g['creator']['sid'] == creator_sid), None)
     if not room_id:
