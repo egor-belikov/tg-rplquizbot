@@ -30,9 +30,11 @@
         .game-card-info p { margin: 4px 0; }
         #settings-screen .container { text-align: left; }
         #game-screen .game-header { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 15px; }
-        .player-info { padding: 5px; border-radius: 4px; border-bottom: 2px solid transparent; /* Заменили тень */ padding-bottom: 3px; /* Компенсация высоты */}
-        .player-info.active { border-bottom: 2px solid var(--accent-color); /* Заменили тень */ }
-        .player-info .score { margin-top: 4px; /* Добавили отступ для счета */ }
+        /* --- ИЗМЕНЕНИЕ: Убрана тень, добавлена граница и паддинг --- */
+        .player-info { padding: 5px; border-radius: 4px; border-bottom: 2px solid transparent; padding-bottom: 3px; }
+        .player-info.active { border-bottom: 2px solid var(--accent-color); }
+        .player-info .score { margin-top: 4px; }
+        /* --- КОНЕЦ ИЗМЕНЕНИЯ --- */
         #named-players-list { list-style: none; padding: 0; max-height: 40vh; overflow-y: auto; margin: 15px 0; text-align: left; }
         #leaderboard-screen table, #game-over-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         #leaderboard-screen th, #leaderboard-screen td, #game-over-table th, #game-over-table td { padding: 10px; border-bottom: 1px solid var(--secondary-color); text-align: left; }
@@ -134,9 +136,9 @@
     <div id="game-screen" class="screen">
         <div class="container">
             <div class="game-header">
-                <div class="player-info" id="player-0-info"><div class="nickname">...</div><div class="time-bank">...</div><div class="score">...</div></div>
+                 <div class="player-info" id="player-0-info"><div class="nickname">...</div><div class="time-bank">...</div><div class="score">...</div></div>
                 <div id="round-info">...</div>
-                <div class="player-info" id="player-1-info"><div class="nickname">...</div><div class="time-bank">...</div><div class="score">...</div></div>
+                 <div class="player-info" id="player-1-info"><div class="nickname">...</div><div class="time-bank">...</div><div class="score">...</div></div>
             </div>
             <h2 id="club-name-display">Клуб...</h2>
             <ul id="named-players-list"></ul>
@@ -151,8 +153,7 @@
         <div class="container">
             <h2 id="summary-title">Раунд завершен!</h2>
             <h3 id="summary-club-name"></h3>
-            <p><strong>Текущий счет: <span id="summary-score"></span></strong></p>
-
+            <p><strong>Текущий счет: <span id="summary-score">0 - 0</span></strong></p>
             <div class="summary-list-wrapper">
                 <h4>Весь состав:</h4>
                 <div id="summary-list-container">
@@ -182,9 +183,8 @@
             <h2>Игра окончена!</h2>
             <p id="game-over-score">Счет 0 - 0</p>
             <p id="game-over-reason">Причина...</p>
-            <p id="game-over-ratings">Изменение рейтинга...</p>
-
-            <h3>История раундов</h3>
+             <p id="game-over-ratings">Изменение рейтинга...</p>
+             <h3>История раундов</h3>
             <table id="game-over-table">
                 <thead>
                     <tr>
@@ -213,7 +213,7 @@
                 nickname: null, telegramId: null, currentRoomId: null,
                 myPlayerIndex: null, maxClubsInLeague: 16,
                 isTraining: false,
-                isLastRound: false // <-- ИЗМЕНЕНИЕ: Добавлено состояние
+                isLastRound: false
             };
             let gameTimerInterval = null;
             let summaryCountdownInterval = null;
@@ -245,7 +245,7 @@
             const summaryListContainer = document.getElementById('summary-list-container');
             const gameOverBackBtn = document.getElementById('game-over-back-btn');
             const summaryCountdownDisplay = document.getElementById('summary-countdown');
-            const skipPauseBtn = document.getElementById('skip-pause-btn'); // <-- Получаем кнопку
+            const skipPauseBtn = document.getElementById('skip-pause-btn');
 
 
             summaryListContainer.addEventListener('scroll', () => {
@@ -286,9 +286,16 @@
                 summaryListContainer.scrollTop = 0;
 
                 document.getElementById('summary-club-name').textContent = data.clubName;
-                const p1_score = data.scores[0] || 0;
-                const p2_score = data.scores[1] || 0;
-                document.getElementById('summary-score').textContent = `${p1_score} - ${p2_score}`;
+
+                // --- ИЗМЕНЕНИЕ: Отображение счета (Мой - Соперник) ---
+                let myScore = data.scores[localState.myPlayerIndex] || 0;
+                let opponentScore = 0;
+                if (data.mode !== 'solo') {
+                    const opponentIndex = 1 - localState.myPlayerIndex;
+                    opponentScore = data.scores[opponentIndex] || 0;
+                }
+                document.getElementById('summary-score').textContent = `${myScore} - ${opponentScore}`;
+                // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
                 const summaryList = document.getElementById('summary-player-list');
                 summaryList.innerHTML = '';
@@ -307,11 +314,9 @@
                     summaryList.appendChild(li);
                 });
 
-                // --- ИЗМЕНЕНИЕ: Текст кнопки в зависимости от флага ---
                 const buttonText = localState.isLastRound ? 'К итогам игры' : 'Следующий раунд';
                 skipPauseBtn.textContent = buttonText;
                 skipPauseBtn.disabled = false;
-                // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
                 showScreen('summary');
 
@@ -336,28 +341,27 @@
                 }, 0);
             });
 
-            skipPauseBtn.addEventListener('click', () => { // <-- Используем переменную
+            skipPauseBtn.addEventListener('click', () => {
                 if (summaryCountdownInterval) {
                     clearInterval(summaryCountdownInterval);
                     summaryCountdownInterval = null;
                 }
                 socket.emit('request_skip_pause', { roomId: localState.currentRoomId });
-                skipPauseBtn.disabled = true; // <-- Используем переменную
-                skipPauseBtn.textContent = 'Ожидаем...'; // <-- Используем переменную
+                skipPauseBtn.disabled = true;
+                skipPauseBtn.textContent = 'Ожидаем...';
             });
 
-            // --- ИЗМЕНЕНИЕ: Формирование текста кнопки при голосовании ---
             socket.on('skip_vote_update', (data) => {
                 const baseButtonText = localState.isLastRound ? 'К итогам игры' : 'Следующий раунд';
                 skipPauseBtn.textContent = `${baseButtonText} (${data.count}/2)`;
             });
-            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
             socket.on('round_started', (state) => {
                 showScreen('game');
                 updateGameUI(state);
             });
 
+            // --- ИЗМЕНЕНИЕ: Логика отображения игроков (я слева, он справа) + таймер ---
             function updateGameUI(state) {
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
 
@@ -368,60 +372,98 @@
                         localState.myPlayerIndex = parseInt(index); break;
                     }
                 }
-
-                // --- ИЗМЕНЕНИЕ: Сохраняем флаг последнего раунда ---
                 localState.isLastRound = (state.round === state.totalRounds);
-                // --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
+                // Определяем, кто где отображается (0 - лево, 1 - право)
+                const myDisplayIndex = 0;
+                const opponentDisplayIndex = 1;
+                const opponentActualIndex = localState.myPlayerIndex !== -1 ? 1 - localState.myPlayerIndex : -1; // -1 для соло
+
+                const playerElements = [
+                    document.getElementById(`player-${myDisplayIndex}-info`),
+                    document.getElementById(`player-${opponentDisplayIndex}-info`)
+                ];
 
                 document.getElementById('round-info').textContent = `Раунд ${state.round}/${state.totalRounds}`;
                 document.getElementById('club-name-display').textContent = state.clubName;
 
-                for (let i = 0; i < 2; i++) {
-                    const playerInfoEl = document.getElementById(`player-${i}-info`);
-                    if (state.players[i]) {
-                        playerInfoEl.style.display = 'block';
-                        playerInfoEl.querySelector('.nickname').textContent = state.players[i].nickname;
-                        playerInfoEl.querySelector('.score').textContent = state.scores[i] || 0;
+                // Отображаем мои данные слева
+                if (localState.myPlayerIndex !== -1) {
+                    const myInfo = state.players[localState.myPlayerIndex];
+                    const myEl = playerElements[myDisplayIndex];
+                    myEl.style.display = 'block';
+                    myEl.querySelector('.nickname').textContent = myInfo.nickname;
+                    myEl.querySelector('.score').textContent = state.scores[localState.myPlayerIndex] || 0;
+                    const myTimeBankEl = myEl.querySelector('.time-bank');
+                    let myTimeLeft = state.timeBanks[localState.myPlayerIndex] || 0;
 
-                        const timeBankEl = playerInfoEl.querySelector('.time-bank');
-                        let timeLeft = state.timeBanks[i] || 0;
-                        // --- ИЗМЕНЕНИЕ: Изначальная установка цвета и формата ---
-                        if (timeLeft < 20) {
-                            timeBankEl.style.color = 'var(--incorrect-color)';
-                            timeBankEl.textContent = `${timeLeft.toFixed(2)}с`;
-                        } else {
-                            timeBankEl.style.color = 'var(--text-color)';
-                            timeBankEl.textContent = `${timeLeft.toFixed(1)}с`;
-                        }
-                        // --- КОНЕЦ ИЗМЕНЕНИЯ ---
-
-                        playerInfoEl.classList.toggle('active', i === state.currentPlayerIndex);
-
-                        if (i === state.currentPlayerIndex && timeLeft > 0) {
-                            gameTimerInterval = setInterval(() => {
-                                timeLeft -= 0.1;
-                                if (timeLeft < 0) timeLeft = 0;
-
-                                // --- ИЗМЕНЕНИЕ: Установка цвета и формата в интервале ---
-                                if (timeLeft < 20) {
-                                    timeBankEl.style.color = 'var(--incorrect-color)';
-                                    timeBankEl.textContent = `${timeLeft.toFixed(2)}с`;
-                                } else {
-                                    timeBankEl.style.color = 'var(--text-color)'; // Сброс цвета
-                                    timeBankEl.textContent = `${timeLeft.toFixed(1)}с`;
-                                }
-                                // --- КОНЕЦ ИЗМЕНЕНИЯ ---
-
-                                if (timeLeft <= 0) {
-                                    clearInterval(gameTimerInterval);
-                                }
-                            }, 100);
-                        }
+                    // Цвет и формат моего таймера
+                    if (myTimeLeft < 20) {
+                        myTimeBankEl.style.color = 'var(--incorrect-color)';
+                        myTimeBankEl.textContent = `${myTimeLeft.toFixed(2)}с`;
                     } else {
-                        playerInfoEl.style.display = 'none';
+                        myTimeBankEl.style.color = 'var(--text-color)';
+                        myTimeBankEl.textContent = `${myTimeLeft.toFixed(1)}с`;
                     }
+                     // Подсветка моего хода
+                    myEl.classList.toggle('active', localState.myPlayerIndex === state.currentPlayerIndex);
+                } else {
+                    // Скрываем левый блок, если что-то пошло не так (не должно)
+                    playerElements[myDisplayIndex].style.display = 'none';
                 }
 
+                 // Отображаем данные соперника справа (или скрываем для соло)
+                const opponentInfo = state.players[opponentActualIndex];
+                const opponentEl = playerElements[opponentDisplayIndex];
+                if (opponentInfo) {
+                    opponentEl.style.display = 'block';
+                    opponentEl.querySelector('.nickname').textContent = opponentInfo.nickname;
+                    opponentEl.querySelector('.score').textContent = state.scores[opponentActualIndex] || 0;
+                    const opponentTimeBankEl = opponentEl.querySelector('.time-bank');
+                    let opponentTimeLeft = state.timeBanks[opponentActualIndex] || 0;
+
+                     // Цвет и формат таймера соперника
+                    if (opponentTimeLeft < 20) {
+                        opponentTimeBankEl.style.color = 'var(--incorrect-color)';
+                        opponentTimeBankEl.textContent = `${opponentTimeLeft.toFixed(2)}с`;
+                    } else {
+                        opponentTimeBankEl.style.color = 'var(--text-color)';
+                        opponentTimeBankEl.textContent = `${opponentTimeLeft.toFixed(1)}с`;
+                    }
+                    // Подсветка хода соперника
+                    opponentEl.classList.toggle('active', opponentActualIndex === state.currentPlayerIndex);
+                } else {
+                    opponentEl.style.display = 'none'; // Скрываем правый блок для соло
+                }
+
+                // Запускаем интервал таймера для того, чей сейчас ход
+                const currentPlayerActualIndex = state.currentPlayerIndex;
+                const isMyTurn = localState.myPlayerIndex === currentPlayerActualIndex;
+                const activePlayerDisplayIndex = isMyTurn ? myDisplayIndex : opponentDisplayIndex;
+                const activePlayerTimeBankEl = playerElements[activePlayerDisplayIndex].querySelector('.time-bank');
+                let activeTimeLeft = state.timeBanks[currentPlayerActualIndex] || 0;
+
+                if (activeTimeLeft > 0) {
+                    gameTimerInterval = setInterval(() => {
+                        activeTimeLeft -= 0.1;
+                        if (activeTimeLeft < 0) activeTimeLeft = 0;
+
+                        // Обновление таймера активного игрока с цветом и форматом
+                        if (activeTimeLeft < 20) {
+                            activePlayerTimeBankEl.style.color = 'var(--incorrect-color)';
+                            activePlayerTimeBankEl.textContent = `${activeTimeLeft.toFixed(2)}с`;
+                        } else {
+                            activePlayerTimeBankEl.style.color = 'var(--text-color)';
+                            activePlayerTimeBankEl.textContent = `${activeTimeLeft.toFixed(1)}с`;
+                        }
+
+                        if (activeTimeLeft <= 0) {
+                            clearInterval(gameTimerInterval);
+                        }
+                    }, 100);
+                }
+
+                // Список названных игроков
                 const namedPlayersList = document.getElementById('named-players-list');
                 namedPlayersList.innerHTML = '';
                 state.namedPlayers.forEach(p => {
@@ -430,20 +472,20 @@
                     namedPlayersList.appendChild(li);
                 });
 
-                const myTurn = state.currentPlayerIndex === localState.myPlayerIndex;
+                // Инпут и кнопки
                 const guessInput = document.getElementById('guess-input');
-
                 guessInput.disabled = false;
-                if (myTurn) {
+                if (isMyTurn) {
                     guessInput.placeholder = "Введите фамилию игрока";
                 } else {
                     guessInput.placeholder = "Ход соперника... (можно печатать)";
                 }
-                document.getElementById('submit-guess-btn').disabled = !myTurn;
-                document.getElementById('surrender-btn').disabled = !myTurn;
+                document.getElementById('submit-guess-btn').disabled = !isMyTurn;
+                document.getElementById('surrender-btn').disabled = !isMyTurn;
 
                 document.getElementById('guess-result-msg').textContent = '';
             }
+            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
             function getEndReasonText(reason) {
                 if (reason === 'unreachable_score') return 'Игра завершена досрочно: счет недосягаемый.';
@@ -473,28 +515,39 @@
                 return 'н/д';
             }
 
+            // --- ИЗМЕНЕНИЕ: Отображение итогов (Мой - Соперник) ---
             socket.on('game_over', (data) => {
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
                 if (summaryCountdownInterval) clearInterval(summaryCountdownInterval);
 
-                const p1_nick = data.players[0].nickname;
-                const p2_nick = data.players[1] ? data.players[1].nickname : null;
+                // Определяем индексы
+                const p0_nick = data.players[0].nickname;
+                const p1_nick = data.players[1] ? data.players[1].nickname : null;
+                const myOriginalIndex = (localState.nickname === p0_nick) ? 0 : 1;
+                const opponentOriginalIndex = 1 - myOriginalIndex;
 
-                document.getElementById('game-over-score').textContent = `Счет ${data.final_scores[0]} - ${data.final_scores[1] || 0}`;
+                // Счет
+                const myFinalScore = data.final_scores[myOriginalIndex] || 0;
+                const opponentFinalScore = data.final_scores[opponentOriginalIndex] || 0;
+                document.getElementById('game-over-score').textContent = `Счет ${myFinalScore} - ${opponentFinalScore}`;
+
                 document.getElementById('game-over-reason').textContent = getEndReasonText(data.end_reason);
 
+                // Рейтинг
                 let ratingText = '';
                 if (data.mode === 'solo') {
                     ratingText = 'Рейтинг в тренировке не меняется.';
                 } else if (data.rating_changes) {
-                    const p1 = data.rating_changes['0'];
-                    const p2 = data.rating_changes['1'];
-                    if (p1 && p2) {
-                        const p1_diff = p1.new - p1.old;
-                        const p2_diff = p2.new - p2.old;
+                    const myChanges = data.rating_changes[myOriginalIndex.toString()];
+                    const opponentChanges = data.rating_changes[opponentOriginalIndex.toString()];
+
+                    if (myChanges && opponentChanges) {
+                         const myDiff = myChanges.new - myChanges.old;
+                         const opponentDiff = opponentChanges.new - opponentChanges.old;
+                         // Сначала мои данные
                         ratingText = `
-                            <b>${p1.nickname}:</b> ${p1.new} (${p1_diff >= 0 ? '+' : ''}${p1_diff})<br>
-                            <b>${p2.nickname}:</b> ${p2.new} (${p2_diff >= 0 ? '+' : ''}${p2_diff})
+                            <b>${myChanges.nickname} (Вы):</b> ${myChanges.new} (${myDiff >= 0 ? '+' : ''}${myDiff})<br>
+                            <b>${opponentChanges.nickname}:</b> ${opponentChanges.new} (${opponentDiff >= 0 ? '+' : ''}${opponentDiff})
                         `;
                     } else {
                          ratingText = 'Ошибка при загрузке изменения рейтинга.';
@@ -504,14 +557,13 @@
                 }
                 document.getElementById('game-over-ratings').innerHTML = ratingText;
 
+                 // История раундов (p1_nick и p2_nick используются в getRoundOutcomeText)
                 const historyTable = document.querySelector('#game-over-table tbody');
                 historyTable.innerHTML = '';
-
                 if (data.history && data.history.length > 0) {
                     data.history.forEach((round, index) => {
                         const tr = document.createElement('tr');
-                        const outcomeText = getRoundOutcomeText(round, p1_nick, p2_nick);
-
+                        const outcomeText = getRoundOutcomeText(round, p0_nick, p1_nick); // Используем оригинальные ники
                         tr.innerHTML = `
                             <td>${index + 1}</td>
                             <td>${round.club_name}</td>
@@ -525,6 +577,7 @@
 
                 showScreen('gameOver');
             });
+            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
             socket.on('turn_updated', (state) => {
                 updateGameUI(state);

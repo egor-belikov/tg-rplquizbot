@@ -396,6 +396,7 @@ def start_game_loop(room_id):
         print(f"[GAME_OVER] {room_id}: Игра окончена. Причина: {game.end_reason}, Счет: {game.scores.get(0, 0)}-{game.scores.get(1, 0)}")
 
         for player_index, player_info in game.players.items():
+            # Проверяем, существует ли SID и подключен ли игрок
             if player_info.get('sid') and player_info['sid'] != 'BOT' and socketio.server.manager.is_connected(player_info['sid'], '/'):
                  add_player_to_lobby(player_info['sid'])
 
@@ -544,10 +545,10 @@ def handle_connect():
     print(f"[CONNECTION] Клиент подключился: {sid}")
     emit('auth_request')
 
-# --- ИСПРАВЛЕНИЕ: Убрано обновление статистики при дисконнекте ---
+# --- ИСПРАВЛЕНИЕ: AttributeError в handle_disconnect ---
 @socketio.on('disconnect')
-def handle_disconnect():
-    sid = request.sid
+def handle_disconnect(): # Функция не должна принимать sid как аргумент
+    sid = request.sid # Получаем sid здесь
     print(f"[CONNECTION] Клиент {sid} отключился.")
     remove_player_from_lobby(sid)
     room_to_delete_from_lobby = next((rid for rid, g in open_games.items() if g['creator']['sid'] == sid), None)
@@ -560,6 +561,7 @@ def handle_disconnect():
     game_session_to_terminate = None
     disconnected_player_index = -1
 
+    # Ищем игру, из которой вышел игрок
     for room_id, game_session in list(active_games.items()):
         game = game_session['game']
         idx = next((i for i, p in game.players.items() if p.get('sid') == sid), -1)
@@ -567,11 +569,12 @@ def handle_disconnect():
             game_to_terminate_id = room_id
             game_session_to_terminate = game_session
             disconnected_player_index = idx
+            # Если это PvP, ищем SID оппонента
             if len(game.players) > 1:
                 opponent_index = 1 - idx
                 if game.players[opponent_index].get('sid') and game.players[opponent_index]['sid'] != 'BOT':
                     opponent_sid = game.players[opponent_index]['sid']
-            break
+            break # Нашли игру, выходим из цикла
 
     if game_to_terminate_id and game_session_to_terminate:
         game = game_session_to_terminate['game']
@@ -579,17 +582,17 @@ def handle_disconnect():
         print(f"[DISCONNECT] Игрок {sid} ({disconnected_player_nick}) отключился от игры {game_to_terminate_id}. Игра прекращена.")
 
         if game.mode == 'pvp' and opponent_sid:
-            # --- ИСПРАВЛЕНИЕ: По новой логике, НЕ обновляем рейтинг и игры при дисконнекте ---
             print(f"[RATING_CALC_DC] {game_to_terminate_id}: Игра отменена из-за дисконнекта. Статистика и рейтинг НЕ обновляются.")
 
-            if opponent_sid in socketio.server.manager.connected_sids.get('/', set()): # Проверяем, онлайн ли оппонент
+            # --- ИСПРАВЛЕНИЕ: Правильная проверка подключения ---
+            # Проверяем, онлайн ли оппонент, используя актуальный метод
+            if socketio.server.manager.is_connected(opponent_sid, '/'):
+            # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
                 add_player_to_lobby(opponent_sid)
-                # --- ИЗМЕНЕНИЕ: Отправляем другое сообщение ---
                 emit('opponent_disconnected', {'message': f'Соперник ({disconnected_player_nick}) отключился. Игра отменена, статистика не засчитана.'}, room=opponent_sid)
                 print(f"[GAME] {game_to_terminate_id}: Отправлено уведомление об отмене игры {opponent_sid}.")
             else:
                  print(f"[GAME] {game_to_terminate_id}: Оставшийся игрок {opponent_sid} тоже отключился.")
-            # --- БЛОК С ОБНОВЛЕНИЕМ РЕЙТИНГА ПОЛНОСТЬЮ УДАЛЕН ---
 
         else:
              print(f"[DISCONNECT] {game_to_terminate_id}: Игра была не PvP или не было оппонента, рейтинг не обновлен.")
@@ -597,6 +600,7 @@ def handle_disconnect():
         if game_to_terminate_id in active_games: del active_games[game_to_terminate_id]
         broadcast_lobby_stats()
 # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
 
 # --- Логика аутентификации ---
 def validate_telegram_data(init_data_str):
@@ -727,14 +731,14 @@ def handle_create_game(data):
         # --- ИЗМЕНЕНИЕ: Передаем 'pvp' в GameState ---
         temp_game = GameState({'nickname': nickname}, all_leagues_data, mode='pvp', settings=settings)
     except Exception as e: print(f"[ERROR] Ошибка валидации настроек для {nickname}: {e}"); emit('create_game_fail', {'message': 'Ошибка настроек.'}); return
-    
+
     # --- ИЗМЕНЕНИЕ: Эта проверка все еще корректна, т.к. для pvp min=3 ---
     # (Она сработает, если num_rounds=0 из-за пустой лиги)
-    if temp_game.num_rounds < 3: 
-        print(f"[ERROR] {nickname} ({sid}) pvp игра < 3 клубов (num_rounds: {temp_game.num_rounds})."); 
-        emit('create_game_fail', {'message': 'Мин. 3 клуба.'}); 
+    if temp_game.num_rounds < 3:
+        print(f"[ERROR] {nickname} ({sid}) pvp игра < 3 клубов (num_rounds: {temp_game.num_rounds}).");
+        emit('create_game_fail', {'message': 'Мин. 3 клуба.'});
         return
-    
+
     room_id = str(uuid.uuid4()); join_room(room_id); open_games[room_id] = {'creator': {'sid': sid, 'nickname': nickname}, 'settings': settings}
     remove_player_from_lobby(sid); print(f"[LOBBY] {nickname} ({sid}) создал {room_id}. Клубов: {temp_game.num_rounds}, ТБ: {settings.get('time_bank', 90)}")
     socketio.emit('update_lobby', get_lobby_data_list())
