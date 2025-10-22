@@ -1,6 +1,11 @@
 # Используем официальный образ Python
 FROM python:3.10-slim
 
+# --- ИСПРАВЛЕНИЕ 2 ---
+# Сначала устанавливаем компилятор (build-essential),
+# который нужен для 'python-Levenshtein' (из fuzzywuzzy)
+RUN apt-get update && apt-get install -y build-essential
+
 # Устанавливаем рабочую директорию в контейнере
 WORKDIR /app
 
@@ -13,6 +18,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем весь остальной код проекта в контейнер
 COPY . .
 
-# Команда для запуска приложения
-# Gunicorn будет слушать порт 8080, который Fly.io откроет миру
-CMD ["gunicorn", "--worker-class", "eventlet", "-w", "1", "--bind", "0.0.0.0:8080", "server:app"]
+# --- ИСПРАВЛЕНИЕ 1 ---
+# Используем 'python -m gunicorn' для надежного запуска
+CMD ["python", "-m", "gunicorn", "--worker-class", "eventlet", "-w", "1", "--bind", "0.0.0.0:8080", "server:app"]
