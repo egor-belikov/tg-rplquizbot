@@ -361,14 +361,12 @@ def validate_telegram_data(init_data_str):
         unquoted = unquote(init_data_str); params_list = unquoted.split('&'); params_dict = {k: v for k, v in [item.split('=', 1) for item in params_list if '=' in item]}; sorted_keys = sorted(params_dict.keys())
         rcv_hash = params_dict.get('hash', ''); check_list = []; user_val = None
         
-        # --- НАЧАЛО ИСПРАВЛЕНИЯ (ОШИБКА АУТЕНТИФИКАЦИИ) ---
         for key in sorted_keys: 
             v = params_dict[key]
             if key != 'hash': 
                 check_list.append(f"{key}={v}")
             if key == 'user': 
                 user_val = v
-        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
         check_str = "\n".join(check_list); secret = hmac.new("WebAppData".encode(), TELEGRAM_BOT_TOKEN.encode(), hashlib.sha256).digest()
         calc_hash = hmac.new(secret, check_str.encode(), hashlib.sha256).hexdigest()
@@ -500,14 +498,20 @@ def handle_join_game(data):
     r_id = next((rid for rid, g in open_games.items() if g['creator']['sid'] == c_sid), None)
     if not r_id: print(f"[LOBBY] {j_nick} failed join {c_sid}. Not found."); emit('join_game_fail', {'message': 'Игра не найдена.'}); return
     
-    g_join = open_games.pop(r_id)
-    socketio.emit('update_lobby', get_lobby_data_list())
+    # --- НАЧАЛО ИСПРАВЛЕНИЯ (ЛОГИКА JOIN) ---
+    
+    # 1. НЕ удаляем, а просто получаем (get)
+    g_join = open_games.get(r_id) 
+    if not g_join:
+         print(f"[LOBBY] {j_nick} failed join. Race condition?"); 
+         emit('join_game_fail', {'message': 'Игра не найдена.'}); 
+         return
+
     c_info = g_join['creator']
     
     if c_info['sid'] == j_sid: 
         print(f"[SECURITY] {j_nick} joined own game {r_id}.")
-        open_games[r_id] = g_join 
-        socketio.emit('update_lobby', get_lobby_data_list())
+        # Ничего не делаем, просто выходим
         return
         
     p1, p2 = {'sid': c_info['sid'], 'nickname': c_info['nickname']}, {'sid': j_sid, 'nickname': j_nick}
@@ -516,6 +520,16 @@ def handle_join_game(data):
     
     try: 
         game = GameState(p1, all_leagues_data, p2, 'pvp', g_join['settings'])
+        
+        # 2. Удаляем (pop) игру ТОЛЬКО ПОСЛЕ успешного создания GameState
+        g_popped = open_games.pop(r_id, None)
+        if not g_popped:
+            # Кто-то другой успел забрать игру, пока мы создавали GameState
+            raise Exception("Game was joined by another player (race condition).")
+
+        # 3. Обновляем лобби, т.к. игра успешно 'pop'-нута
+        socketio.emit('update_lobby', get_lobby_data_list())
+        
         active_games[r_id] = {'game': game, 'turn_id': None, 'pause_id': None, 'skip_votes': set(), 'last_round_end_reason': None}
         broadcast_lobby_stats()
         print(f"[GAME] Start PvP: {p1['nickname']} vs {p2['nickname']}. Room: {r_id}. R:{game.num_rounds}")
@@ -523,15 +537,16 @@ def handle_join_game(data):
     
     except Exception as e: 
         print(f"[ERROR] PvP creation failed {r_id}: {e}")
-        leave_room(r_id, sid=p1['sid'])
-        leave_room(r_id, sid=p2['sid'])
-        if r_id in active_games: 
-            del active_games[r_id]
+        # 4. В блоке except игра НЕ была удалена из open_games
+        # Нам нужно только выкинуть joiner'а (p2) из комнаты и вернуть в лобби
         
-        add_player_to_lobby(p1['sid'])
+        leave_room(r_id, sid=p2['sid'])
         add_player_to_lobby(p2['sid'])
-        emit('join_game_fail', {'message': 'Ошибка сервера.'}, room=p1['sid'])
-        emit('join_game_fail', {'message': 'Ошибка сервера.'}, room=p2['sid'])
+        
+        # Отправляем ошибку только joiner'у
+        emit('join_game_fail', {'message': 'Ошибка сервера.'}, room=p2['sid']) 
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
 
 @socketio.on('submit_guess')
 def handle_submit_guess(data):
