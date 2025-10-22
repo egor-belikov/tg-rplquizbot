@@ -10,15 +10,11 @@ WORKDIR /app
 COPY requirements.txt requirements.txt
 
 # Устанавливаем зависимости
+# УБЕРИ aiogram из requirements.txt перед деплоем!
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем весь остальной код проекта в контейнер
+# Копируем весь остальной код проекта (БЕЗ bot.py и start.sh!)
 COPY . .
 
-# --- ИСПРАВЛЕНИЕ ---
-# Даем права на выполнение нашему скрипту
-# (Это дублирует команду git, но так надежнее)
-RUN chmod +x /app/start.sh
-
-# Запускаем наш главный скрипт
-CMD ["/app/start.sh"]
+# Запускаем веб-сервер игры
+CMD ["python", "-m", "gunicorn", "--worker-class", "eventlet", "-w", "1", "--bind", "0.0.0.0:8000", "server:app"]
