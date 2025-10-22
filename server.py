@@ -404,7 +404,7 @@ def start_game_loop(room_id):
                 print(f"[RATING_CALC] {room_id}: Запрос игроков из БД: {p1_nick}, {p2_nick}") # <-- НОВЫЙ ЛОГ
                 p1_obj_query = User.query.filter_by(nickname=p1_nick).first()
                 p2_obj_query = User.query.filter_by(nickname=p2_nick).first()
-                
+
                 if p1_obj_query and p2_obj_query:
                     p1_id, p2_id = p1_obj_query.id, p2_obj_query.id
                     p1_old_rating, p2_old_rating = int(p1_obj_query.rating), int(p2_obj_query.rating)
@@ -457,7 +457,7 @@ def start_game_loop(room_id):
                 socketio.emit('leaderboard_data', get_leaderboard_data())
             else:
                  print(f"[RATING_CALC] {room_id}: Рейтинги НЕ обновлены из-за отсутствия одного из игроков в БД.") # <-- ИЗМЕНЕННЫЙ ЛОГ
-        
+
         else:
              print(f"[GAME_OVER] {room_id}: Рейтинги не подсчитывались (Режим: {game.mode}, Игроков: {len(game.players)}).") # <-- НОВЫЙ ЛОГ
 
@@ -591,14 +591,14 @@ def handle_disconnect():
                     loser_obj.games_played += 1
                     db.session.commit()
                     print(f"[STATS][RATING_CALC_DC] {game_to_terminate_id}: Засчитана игра из-за дисконнекта.") # <-- ИЗМЕНЕННЫЙ ЛОГ
-                    
+
                     p1_for_rating = winner_obj if winner_index == 0 else loser_obj
                     p2_for_rating = loser_obj if winner_index == 0 else winner_obj
-                    
+
                     # Исход для P1 (p1_for_rating)
                     p1_outcome = 1.0 if winner_index == 0 else 0.0
                     print(f"[RATING_CALC_DC] {game_to_terminate_id}: P1 (idx 0) - {p1_for_rating.nickname}, P2 (idx 1) - {p2_for_rating.nickname}. Исход для P1: {p1_outcome}") # <-- НОВЫЙ ЛОГ
-                    
+
                     # update_ratings уже логирует результат внутри себя
                     update_ratings(p1_user_obj=p1_for_rating, p2_user_obj=p2_for_rating, p1_outcome=p1_outcome)
                     socketio.emit('leaderboard_data', get_leaderboard_data())
@@ -682,10 +682,19 @@ def handle_set_username(data):
             emit('auth_status', {'success': False, 'message': 'Ошибка при регистрации. Попробуйте позже.'})
 
 # --- Обработчики игровых действий ---
+
+# --- ИСПРАВЛЕНИЕ: UnboundLocalError ---
 @socketio.on('request_skip_pause')
 def handle_request_skip_pause(data):
-    room_id = data.get('roomId'); sid = request.sid; game_session = active_games.get(room_id)
-    if not game_session: return; game = game_session['game']
+    room_id = data.get('roomId'); sid = request.sid
+    game_session = active_games.get(room_id)
+
+    # ИСПРАВЛЕНИЕ: Разделили проверку и присваивание
+    if not game_session:
+        print(f"[ERROR][SKIP_PAUSE] {sid} отправил skip для несуществующей комнаты {room_id}")
+        return
+    game = game_session['game']
+
     if game.mode == 'solo':
         if game_session.get('pause_id'):
             print(f"[GAME] {room_id}: Пропуск паузы (соло) от {sid}."); game_session['pause_id'] = None; start_game_loop(room_id)
@@ -697,6 +706,7 @@ def handle_request_skip_pause(data):
             print(f"[GAME] {room_id}: Голос за пропуск паузы от {game.players[player_index]['nickname']} ({len(game_session['skip_votes'])}/{len(game.players)}).")
             if len(game_session['skip_votes']) >= len(game.players):
                 print(f"[GAME] {room_id}: Пропуск паузы (PvP, все голоса)."); game_session['pause_id'] = None; start_game_loop(room_id)
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 @socketio.on('get_leaderboard')
 def handle_get_leaderboard(): emit('leaderboard_data', get_leaderboard_data())
@@ -773,7 +783,7 @@ def handle_join_game(data):
 def handle_submit_guess(data):
     room_id, guess, sid = data.get('roomId'), data.get('guess'), request.sid
     game_session = active_games.get(room_id)
-    
+
     # ИСПРАВЛЕНИЕ: Разделили проверку и присваивание
     if not game_session:
         print(f"[ERROR][GUESS] {sid} отправил guess для несуществующей комнаты {room_id}")
@@ -784,28 +794,28 @@ def handle_submit_guess(data):
     if game.players[game.current_player_index].get('sid') != sid:
         print(f"[SECURITY][GUESS] {sid} попытался угадать в {room_id}, но сейчас не его ход.")
         return
-    
+
     result = game.process_guess(guess); current_player_nick = game.players[game.current_player_index]['nickname']
     print(f"[GUESS] {room_id}: {current_player_nick} '{guess}' -> {result['result']}")
-    
+
     if result['result'] in ['correct', 'correct_typo']:
         time_spent = time.time() - game.turn_start_time; game_session['turn_id'] = None
         game.time_banks[game.current_player_index] -= time_spent
-        if game.time_banks[game.current_player_index] < 0: 
-            print(f"[TIMEOUT] {room_id}: {current_player_nick} угадал, но время вышло ({game.time_banks[game.current_player_index]:.1f}s)."); 
-            on_timer_end(room_id); 
+        if game.time_banks[game.current_player_index] < 0:
+            print(f"[TIMEOUT] {room_id}: {current_player_nick} угадал, но время вышло ({game.time_banks[game.current_player_index]:.1f}s).");
+            on_timer_end(room_id);
             return
-        
+
         game.add_named_player(result['player_data'], game.current_player_index)
         emit('guess_result', {'result': result['result'], 'corrected_name': result['player_data']['full_name']})
-        
+
         if game.is_round_over():
             print(f"[ROUND_END] {room_id}: Раунд завершен (все названы). Ничья 0.5-0.5"); game_session['last_round_end_reason'] = 'completed'
             if game.mode == 'pvp': game.scores[0] += 0.5; game.scores[1] += 0.5; game_session['last_round_winner_index'] = 'draw'
             show_round_summary_and_schedule_next(room_id)
-        else: 
+        else:
             start_next_human_turn(room_id)
-    else: 
+    else:
         emit('guess_result', {'result': result['result']})
 # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
@@ -814,7 +824,7 @@ def handle_submit_guess(data):
 def handle_surrender(data):
     room_id, sid = data.get('roomId'), request.sid
     game_session = active_games.get(room_id)
-    
+
     # ИСПРАВЛЕНИЕ: Разделили проверку и присваивание
     if not game_session:
         print(f"[ERROR][SURRENDER] {sid} отправил surrender для несуществующей комнаты {room_id}")
@@ -825,10 +835,10 @@ def handle_surrender(data):
     if game.players[game.current_player_index].get('sid') != sid:
         print(f"[SECURITY][SURRENDER] {sid} попытался сдаться в {room_id}, но сейчас не его ход.")
         return
-    
+
     game_session['turn_id'] = None; game_session['last_round_end_reason'] = 'surrender'
     surrendering_player_nick = game.players[game.current_player_index]['nickname']
-    print(f"[ROUND_END] {room_id}: Игрок {surrendering_player_nick} сдался."); 
+    print(f"[ROUND_END] {room_id}: Игрок {surrendering_player_nick} сдался.");
     on_timer_end(room_id)
 # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
