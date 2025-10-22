@@ -196,7 +196,7 @@
             tg.ready();
             tg.expand();
 
-            let localState = { nickname: null, telegramId: null, currentRoomId: null, myPlayerIndex: null, maxClubsInLeague: 16, isTraining: false, isSpectating: false }; // Убрал isLastRound
+            let localState = { nickname: null, telegramId: null, currentRoomId: null, myPlayerIndex: null, maxClubsInLeague: 16, isTraining: false, isSpectating: false };
             let gameTimerInterval = null;
             let summaryTimerInterval = null;
 
@@ -234,7 +234,8 @@
             spectatorBackBtn.addEventListener('click', () => { socket.emit('leave_as_spectator', { roomId: localState.currentRoomId }); localState.isSpectating = false; localState.currentRoomId = null; showScreen('lobby'); });
 
             function showScreen(screenName) {
-                if (summaryTimerInterval) { clearInterval(summaryTimerInterval); summaryTimerInterval = null; }
+                // --- ИЗМЕНЕНИЕ: Не останавливаем таймер паузы при переходе ---
+                // if (summaryTimerInterval) { clearInterval(summaryTimerInterval); summaryTimerInterval = null; } 
                 if (gameTimerInterval) { clearInterval(gameTimerInterval); gameTimerInterval = null; }
                 const screenKey = Object.keys(screens).find(key => screens[key] === document.getElementById(`${screenName}-screen`)) || screenName;
                 Object.values(screens).forEach(screen => screen.classList.remove('active'));
@@ -254,18 +255,16 @@
                     if (screens.loading.classList.contains('active')) {
                         screens.loading.querySelector('.loader').style.display = 'none';
                         screens.loading.querySelector('p').textContent = `Ошибка: ${data.message}`;
-                        // --- ИЗМЕНЕНИЕ: Не отключаем сокет, просто показываем ошибку ---
-                        // socket.disconnect(); 
                     } else {
                         document.getElementById('nickname-error').textContent = data.message || 'Ошибка.'; 
                     }
                 }
             });
 
-            // --- ИЗМЕНЕНИЕ: Логика кнопки и отображения для зрителей ---
             socket.on('round_summary', (data) => {
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
-                if (summaryTimerInterval) clearInterval(summaryTimerInterval);
+                // --- ИЗМЕНЕНИЕ: Не останавливаем старый таймер паузы, если он был ---
+                // if (summaryTimerInterval) clearInterval(summaryTimerInterval); 
 
                 summaryListContainer.parentElement.classList.remove('scrolled-to-bottom');
                 summaryListContainer.scrollTop = 0;
@@ -273,7 +272,6 @@
                 document.getElementById('summary-club-name').textContent = data.clubName;
                 let myScore = data.scores[localState.myPlayerIndex] || 0;
                 let opponentScore = (data.mode !== 'solo') ? (data.scores[1 - localState.myPlayerIndex] || 0) : 0;
-                // Корректируем счет для зрителя
                 if (localState.isSpectating) {
                     myScore = data.scores[0] || 0;
                     opponentScore = data.scores[1] || 0;
@@ -290,18 +288,18 @@
                     summaryList.appendChild(li);
                 });
 
-                // Определяем текст кнопки
+                // --- ИЗМЕНЕНИЕ: Текст кнопки + видимость для зрителя ---
                 const isLastRound = data.currentRound === data.totalRounds;
                 const buttonText = isLastRound ? 'К итогам игры' : 'Следующий раунд';
                 skipPauseBtn.textContent = buttonText;
                 
-                // Скрываем кнопку для зрителей, показываем для игроков
                 if (localState.isSpectating) {
                     skipPauseBtn.style.display = 'none';
                 } else {
                     skipPauseBtn.style.display = 'block';
-                    skipPauseBtn.disabled = false; // Сбрасываем блокировку при новом раунде
+                    skipPauseBtn.disabled = false; 
                 }
+                // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
                 showScreen('summary');
 
@@ -309,18 +307,28 @@
                 function updateCountdown() {
                     const now = Date.now();
                     const timeLeft = Math.max(0, Math.ceil((endTime - now) / 1000));
-                    if (screens.summary.classList.contains('active')) { summaryCountdownDisplay.textContent = timeLeft; }
-                    if (timeLeft <= 0) { clearInterval(summaryTimerInterval); summaryTimerInterval = null; }
+                    if (screens.summary.classList.contains('active')) { 
+                        summaryCountdownDisplay.textContent = timeLeft; 
+                    }
+                    if (timeLeft <= 0) { 
+                        clearInterval(summaryTimerInterval); 
+                        summaryTimerInterval = null; 
+                    }
                 }
-                updateCountdown();
-                summaryTimerInterval = setInterval(updateCountdown, 1000);
+                // --- ИЗМЕНЕНИЕ: Не запускаем новый таймер, если старый еще идет ---
+                if (!summaryTimerInterval) {
+                    updateCountdown(); // Вызываем сразу, чтобы не было задержки в 1 сек
+                    summaryTimerInterval = setInterval(updateCountdown, 1000);
+                }
+                // --- КОНЕЦ ИЗМЕНЕНИЯ ---
             });
-            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
+            // --- ИЗМЕНЕНИЕ: Убираем остановку таймера по клику ---
             skipPauseBtn.addEventListener('click', () => {
-                if (summaryTimerInterval) { clearInterval(summaryTimerInterval); summaryTimerInterval = null; }
+                // if (summaryTimerInterval) { clearInterval(summaryTimerInterval); summaryTimerInterval = null; } // ЭТУ СТРОКУ УБРАЛИ
                 socket.emit('request_skip_pause', { roomId: localState.currentRoomId });
             });
+            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
             socket.on('skip_vote_accepted', () => {
                 skipPauseBtn.disabled = true;
@@ -333,7 +341,7 @@
             });
 
             socket.on('round_started', (state) => {
-                 if (summaryTimerInterval) { clearInterval(summaryTimerInterval); summaryTimerInterval = null; }
+                 if (summaryTimerInterval) { clearInterval(summaryTimerInterval); summaryTimerInterval = null; } // Останавливаем таймер паузы, если он еще шел
                 showScreen('game');
                 updateGameUI(state);
             });
@@ -343,7 +351,6 @@
                 localState.currentRoomId = state.roomId;
                 localState.myPlayerIndex = -1;
                 for (const i in state.players) { if (state.players[i].nickname === localState.nickname) { localState.myPlayerIndex = parseInt(i); break; } }
-                // Убрал isLastRound, так как она теперь определяется в round_summary
                 localState.isSpectating = (localState.myPlayerIndex === -1);
 
                 gameControls.style.display = localState.isSpectating ? 'none' : 'block';
@@ -466,7 +473,7 @@
 
             socket.on('game_over', (data) => {
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
-                if (summaryTimerInterval) clearInterval(summaryTimerInterval);
+                if (summaryTimerInterval) clearInterval(summaryTimerInterval); // Останавливаем таймер паузы, если шел
                 localState.isSpectating = false;
 
                 const p0_nick = data.players[0].nickname;
