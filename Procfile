@@ -1,1 +1,1 @@
-web: gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:8080 server:app
+web: python -m gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:8080 server:app
