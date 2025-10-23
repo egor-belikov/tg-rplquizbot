@@ -10,7 +10,9 @@ import hmac
 import hashlib
 import json
 from flask import Flask, render_template, request
-from flask_socketio import SocketIO, emit, join_room, leave_room, disconnect
+# --- ИЗМЕНЕНИЕ: Импортируем leave_room и close_room напрямую ---
+from flask_socketio import SocketIO, emit, join_room, leave_room, close_room, disconnect 
+# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 from flask_sqlalchemy import SQLAlchemy
 from fuzzywuzzy import fuzz
 from glicko2 import Player
@@ -60,8 +62,6 @@ with app.app_context():
 active_games, open_games = {}, {}
 lobby_sids = set()
 tg_id_to_sid, sid_to_tg_id = {}, {}
-# Ключ - ID *закончившейся* игры (old_room_id)
-# Значение - словарь с 'p1_sid', 'p1_nick', 'p2_sid', 'p2_nick', 'settings', 'spectators' (список словарей {sid, nickname}), 'requests' (set с sid запросивших)
 rematch_data_store = {}
 
 
@@ -83,24 +83,26 @@ def broadcast_lobby_stats():
 
 
 def is_player_busy(sid):
+    # (Без изменений)
     for game_session in active_games.values():
         if any(p.get('sid') == sid for p in game_session['game'].players.values()):
-            return True # Игрок в активной игре
+            return True 
         if any(spec.get('sid') == sid for spec in game_session.get('spectators', [])):
-            return True # Зритель в активной игре
+            return True 
 
     for open_game in open_games.values():
         if open_game['creator']['sid'] == sid:
-            return True # Создал открытую игру
+            return True 
 
     for data in rematch_data_store.values():
         if data.get('p1_sid') == sid or data.get('p2_sid') == sid:
-            return True # Занят ожиданием реванша
+            return True 
             
     return False
 
 def add_player_to_lobby(sid):
-    if sid is None: return # Добавлена проверка на None
+    # (Без изменений)
+    if sid is None: return 
     if socketio.server.manager.is_connected(sid, '/') and not is_player_busy(sid):
         lobby_sids.add(sid)
         broadcast_lobby_stats()
@@ -111,12 +113,14 @@ def add_player_to_lobby(sid):
 
 
 def remove_player_from_lobby(sid):
+    # (Без изменений)
     was_in_lobby = sid in lobby_sids
     lobby_sids.discard(sid)
     if was_in_lobby:
         broadcast_lobby_stats()
 
 def load_league_data(filename, league_name):
+    # (Без изменений)
     clubs_data = {}
     try:
         with open(filename, mode='r', encoding='utf-8') as infile:
@@ -146,6 +150,7 @@ all_leagues_data = {}
 all_leagues_data.update(load_league_data('players.csv', 'РПЛ'))
 
 def update_ratings(p1_user_obj, p2_user_obj, p1_outcome):
+    # (Без изменений)
     try:
         p1 = Player(rating=p1_user_obj.rating, rd=p1_user_obj.rd, vol=p1_user_obj.vol)
         p2 = Player(rating=p2_user_obj.rating, rd=p2_user_obj.rd, vol=p2_user_obj.vol)
@@ -163,6 +168,7 @@ def update_ratings(p1_user_obj, p2_user_obj, p1_outcome):
         return None
 
 def get_leaderboard_data():
+    # (Без изменений)
     try:
         with app.app_context():
             users_data = db.session.query(User.nickname, User.rating, User.games_played).order_by(User.rating.desc()).limit(100).all()
@@ -173,12 +179,14 @@ def get_leaderboard_data():
         return []
 
 def format_spectator_info(spectators):
+    # (Без изменений)
     count = len(spectators)
     if count == 0: return None
     elif count <= 3: names = [spec.get('nickname', '?')[:10] + ('...' if len(spec.get('nickname', '?')) > 10 else '') for spec in spectators]; return f"👀 Смотрят: {', '.join(names)}"
     else: return f"👀 Зрителей: {count}"
 
 def broadcast_spectator_update(room_id):
+    # (Без изменений)
     game_session = active_games.get(room_id)
     if not game_session: return
     spectators = game_session.get('spectators', [])
@@ -186,6 +194,7 @@ def broadcast_spectator_update(room_id):
     socketio.emit('spectator_update', {'text': spectator_text}, room=room_id)
 
 class GameState:
+    # (Без изменений)
     def __init__(self, player1_info, all_leagues, player2_info=None, mode='solo', settings=None):
         self.mode = mode
         self.players = {0: player1_info}
@@ -216,7 +225,7 @@ class GameState:
         num_rounds_setting = self.settings.get('num_rounds', 0)
         available_clubs_keys = list(self.all_clubs_data.keys())
 
-        valid_selected_clubs = [] # Инициализируем здесь
+        valid_selected_clubs = [] 
         if selected_clubs and isinstance(selected_clubs, list) and len(selected_clubs) > 0:
             valid_selected_clubs = [c for c in selected_clubs if c in self.all_clubs_data]
             if len(valid_selected_clubs) >= min_clubs:
@@ -224,25 +233,24 @@ class GameState:
                 self.num_rounds = len(self.game_clubs)
             else:
                  print(f"[WARNING] Недостаточно валидных клубов ({len(valid_selected_clubs)}). Используем все.")
-                 selected_clubs = [] # Сбрасываем флаг, чтобы использовать num_rounds или все
+                 selected_clubs = [] 
 
-        # Эта ветка выполняется, если selected_clubs невалидны или не заданы
         if not selected_clubs or len(valid_selected_clubs) < min_clubs:
-            try: # Проверяем num_rounds_setting
+            try: 
                 num_rounds_val = int(num_rounds_setting)
                 if num_rounds_val >= min_clubs:
                     self.num_rounds = min(num_rounds_val, len(available_clubs_keys))
                     self.game_clubs = random.sample(available_clubs_keys, self.num_rounds) if available_clubs_keys else []
                 else:
-                    raise ValueError # Переходим к default
-            except (ValueError, TypeError): # Используем все клубы
+                    raise ValueError 
+            except (ValueError, TypeError): 
                 print(f"[WARNING] Настройки клубов невалидны (<{min_clubs} или не заданы), выбраны все клубы.")
                 self.num_rounds = len(available_clubs_keys)
                 self.game_clubs = random.sample(available_clubs_keys, self.num_rounds) if available_clubs_keys else []
             
         self.settings['num_rounds'] = self.num_rounds
         if not (selected_clubs and isinstance(selected_clubs, list) and len(valid_selected_clubs) >= min_clubs):
-             self.settings['selected_clubs'] = [] # Очищаем, если не использовались
+             self.settings['selected_clubs'] = []
 
 
         self.current_round = -1
@@ -261,6 +269,7 @@ class GameState:
         self.turn_start_time = 0
 
     def start_new_round(self):
+        # (Без изменений)
         if self.is_game_over(): 
              return False
         
@@ -271,9 +280,9 @@ class GameState:
                 self.current_player_index = random.randint(0, 1)
             elif self.previous_round_loser_index is not None:
                 self.current_player_index = self.previous_round_loser_index
-            elif self.last_successful_guesser_index is not None: # Если в прошлом раунде был угадавший (не timeout/surrender)
+            elif self.last_successful_guesser_index is not None: 
                 self.current_player_index = 1 - self.last_successful_guesser_index
-            else: # Ничья без угадываний или другой случай
+            else: 
                 self.current_player_index = self.current_round % 2
         else:
             self.current_player_index = 0
@@ -290,16 +299,16 @@ class GameState:
             self.players_for_comparison = sorted(player_objects, key=lambda p: p['primary_name'])
         else: 
             print(f"[ERROR] Попытка начать раунд {self.current_round + 1}, но клубов только {len(self.game_clubs)}/{self.num_rounds}")
-            # Эта ситуация должна приводить к game over раньше
-            self.end_reason = 'internal_error' # Устанавливаем причину
+            self.end_reason = 'internal_error' 
             return False 
             
         self.named_players_full_names = set()
         self.named_players = []
-        self.last_successful_guesser_index = None # Сбрасываем угадавшего
+        self.last_successful_guesser_index = None 
         return True
 
     def process_guess(self, guess):
+        # (Без изменений)
         guess_norm = guess.strip().lower().replace('ё', 'е')
         if not guess_norm: return {'result': 'not_found'}
         # Точное совпадение
@@ -312,9 +321,8 @@ class GameState:
         for d in self.players_for_comparison:
             if d['full_name'] in self.named_players_full_names: continue
             primary_norm = d['primary_name'].lower().replace('ё', 'е')
-            # Считаем ratio по всем алиасам
             alias_ratios = [fuzz.ratio(guess_norm, alias.lower().replace('ё', 'е')) for alias in d.get('valid_normalized_names', {primary_norm})]
-            current_max_ratio = max(alias_ratios) if alias_ratios else 0 # Используем max по алиасам
+            current_max_ratio = max(alias_ratios) if alias_ratios else 0 
 
             if current_max_ratio > max_ratio:
                  max_ratio = current_max_ratio
@@ -331,19 +339,22 @@ class GameState:
         return {'result': 'not_found'}
 
     def add_named_player(self, player_data, player_index):
+        # (Без изменений)
         self.named_players.append({'full_name': player_data['full_name'], 'name': player_data['primary_name'], 'by': player_index})
         self.named_players_full_names.add(player_data['full_name'])
         self.last_successful_guesser_index = player_index
         if self.mode != 'solo': self.switch_player()
 
     def switch_player(self):
+        # (Без изменений)
         if len(self.players) > 1: self.current_player_index = 1 - self.current_player_index
 
     def is_round_over(self):
+        # (Без изменений)
         return len(self.players_for_comparison) > 0 and len(self.named_players) == len(self.players_for_comparison)
 
     def is_game_over(self):
-        """Проверяет, должна ли игра закончиться ПОСЛЕ ТЕКУЩЕГО раунда."""
+        # (Без изменений)
         next_round_index = self.current_round + 1 
         if next_round_index >= self.num_rounds:
             if self.end_reason == 'normal': self.end_reason = 'normal'
@@ -436,7 +447,7 @@ def on_timer_end(room_id):
 
 # --- Основной игровой цикл ---
 def start_game_loop(room_id):
-    # (Изменения в блоке game_over для сохранения spectator info)
+    # (Без изменений)
     game_session = active_games.get(room_id)
     if not game_session:
         print(f"[ERROR] Попытка запуска цикла для несуществующей игры {room_id}")
@@ -456,24 +467,19 @@ def start_game_loop(room_id):
         print(f"[GAME_OVER] {room_id}: Игра окончена (перед раундом {game.current_round + 2}). Причина: {game.end_reason}, Счет: {game.scores.get(0, 0)}-{game.scores.get(1, 0)}")
         
         player_sids = []
-        # --- ИЗМЕНЕНИЕ: Сохраняем {sid, nickname} зрителей ---
         spectators_info = [{'sid': spec['sid'], 'nickname': spec['nickname']} 
                            for spec in game_session.get('spectators', []) if spec.get('sid')]
-        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
         for i, p_info in game.players.items():
             if p_info.get('sid') and p_info['sid'] != 'BOT':
                  player_sids.append(p_info['sid'])
         
-        # Зрителей возвращаем в лобби
         for spec_info in spectators_info:
              if socketio.server.manager.is_connected(spec_info['sid'], '/'):
                  add_player_to_lobby(spec_info['sid'])
 
-        # Расчет рейтинга
         if game.mode == 'pvp' and len(game.players) == 2:
             print(f"[RATING_CALC] {room_id}: Начало подсчета рейтинга.")
-            # ... (логика расчета рейтинга без изменений) ...
             p1_nick, p2_nick = game.players[0]['nickname'], game.players[1]['nickname']
             p1_new_r, p2_new_r, p1_old_r, p2_old_r = None, None, 1500, 1500
             with app.app_context():
@@ -523,7 +529,6 @@ def start_game_loop(room_id):
         else: 
             print(f"[GAME_OVER] {room_id}: Тренировка окончена.")
 
-        # --- ИЗМЕНЕНИЕ: Сохраняем spectators_info ---
         if game.mode == 'pvp' and len(game.players) == 2:
             rematch_data_store[room_id] = {
                 'p1_sid': game.players[0].get('sid'),
@@ -531,11 +536,10 @@ def start_game_loop(room_id):
                 'p2_sid': game.players[1].get('sid'),
                 'p2_nick': game.players[1]['nickname'],
                 'settings': game.settings.copy(), 
-                'spectators': spectators_info, # Сохраняем инфо зрителей
+                'spectators': spectators_info, 
                 'requests': set()
             }
             print(f"[REMATCH] Stored data for ended game {room_id}")
-        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
         if room_id in active_games:
             del active_games[room_id]
@@ -543,7 +547,7 @@ def start_game_loop(room_id):
         socketio.emit('game_over', game_over_data, room=room_id)
         
         if game.mode == 'solo':
-             socketio.close_room(room_id)
+             close_room(room_id) # Используем импортированную функцию
              print(f"[GAME_OVER] {room_id}: Комната Solo закрыта.")
 
         broadcast_lobby_stats() 
@@ -555,7 +559,7 @@ def start_game_loop(room_id):
          game_over_data = { 'final_scores': game.scores, 'players': {i: {'nickname': p['nickname']} for i, p in game.players.items()}, 'history': game.round_history, 'mode': game.mode, 'end_reason': 'internal_error', 'rating_changes': None, 'old_room_id': room_id }
          socketio.emit('game_over', game_over_data, room=room_id)
          if room_id in active_games: del active_games[room_id]
-         socketio.close_room(room_id)
+         close_room(room_id) # Используем импортированную функцию
          print(f"[GAME_OVER] {room_id}: Закрыта из-за ошибки start_new_round.")
          broadcast_lobby_stats()
          emit_lobby_update()
@@ -566,7 +570,7 @@ def start_game_loop(room_id):
     start_next_human_turn(room_id)
 
 def show_round_summary_and_schedule_next(room_id):
-    # (Добавлен флаг isGameOverAfterPause - без изменений здесь)
+    # (Без изменений)
     game_session = active_games.get(room_id)
     if not game_session: return
     game = game_session['game']
@@ -613,9 +617,10 @@ def pause_watcher(room_id, expected_pause_id):
         print(f"[GAME] {room_id}: Пауза окончена по таймеру.")
         start_game_loop(room_id) 
 
-# --- Остальные функции и обработчики (без изменений, кроме handle_request_rematch) ---
+# --- Остальные функции и обработчики ---
 
 def get_open_games_for_lobby():
+    # (Без изменений)
     open_list = []
     with app.app_context():
         for room_id, game_info in list(open_games.items()):
@@ -633,6 +638,7 @@ def get_open_games_for_lobby():
     return open_list
 
 def get_active_games_for_lobby():
+    # (Без изменений)
     active_list = []
     for room_id, game_session in list(active_games.items()):
          if room_id not in active_games: continue
@@ -647,21 +653,24 @@ def get_active_games_for_lobby():
     return active_list
 
 def emit_lobby_update():
+    # (Без изменений)
     open_games_list = get_open_games_for_lobby()
     active_games_list = get_active_games_for_lobby()
     # Отправляем всем SIDам в лобби
-    for sid in list(lobby_sids): # Итерируем по копии
+    for sid in list(lobby_sids): 
          if socketio.server.manager.is_connected(sid, '/'):
               socketio.emit('update_lobby', {'open_games': open_games_list, 'active_games': active_games_list}, room=sid)
          else:
-              lobby_sids.discard(sid) # Удаляем отключившихся
+              lobby_sids.discard(sid) 
 
 @socketio.on('connect')
 def handle_connect():
+    # (Без изменений)
     sid = request.sid
     print(f"[CONNECTION] Client connected: {sid}")
     emit('auth_request')
 
+# --- ИЗМЕНЕНИЕ: Исправлены ошибки в handle_disconnect ---
 @socketio.on('disconnect')
 def handle_disconnect():
     sid = request.sid
@@ -688,15 +697,15 @@ def handle_disconnect():
 
     if disconnected_player_rematch_info and old_room_id_rematch:
          if opponent_sid_rematch and socketio.server.manager.is_connected(opponent_sid_rematch, '/'):
+              # Получаем комнаты оппонента (может быть пустым списком)
               opponent_rooms = socketio.server.manager.get_rooms(opponent_sid_rematch, '/') or []
               if old_room_id_rematch in opponent_rooms:
                    status_data = {'status': 'opponent_left', 'old_room_id': old_room_id_rematch}
                    socketio.emit('rematch_status', status_data, room=opponent_sid_rematch)
                    print(f"[REMATCH] Notified opponent {opponent_sid_rematch} about disconnect.")
-                   # Перемещаем оппонента в лобби
                    add_player_to_lobby(opponent_sid_rematch)
-                   # Убираем его из старой комнаты
-                   socketio.leave_room(old_room_id_rematch, sid=opponent_sid_rematch)
+                   # Используем импортированную функцию leave_room
+                   leave_room(old_room_id_rematch, sid=opponent_sid_rematch) 
 
               else:
                    print(f"[REMATCH] Opponent {opponent_sid_rematch} already left room {old_room_id_rematch}.")
@@ -710,23 +719,19 @@ def handle_disconnect():
                    spec_rooms = socketio.server.manager.get_rooms(spec_sid, '/') or []
                    if old_room_id_rematch in spec_rooms:
                         socketio.emit('rematch_status', status_data_spec, room=spec_sid)
-                        # Перемещаем зрителя в лобби
                         add_player_to_lobby(spec_sid)
-                        socketio.leave_room(old_room_id_rematch, sid=spec_sid)
-
+                        leave_room(old_room_id_rematch, sid=spec_sid) # Используем импортированную функцию
 
          if old_room_id_rematch in rematch_data_store:
              del rematch_data_store[old_room_id_rematch]
              print(f"[REMATCH] Cleared rematch data for {old_room_id_rematch} due to disconnect.")
              
          # Закрываем старую комнату
-         if socketio.server.manager.room_exists(old_room_id_rematch, '/'):
-              socketio.close_room(old_room_id_rematch)
-              print(f"[REMATCH] Closed old room {old_room_id_rematch} due to player disconnect.")
+         # Используем импортированную функцию close_room
+         close_room(old_room_id_rematch) 
+         print(f"[REMATCH] Closed old room {old_room_id_rematch} due to player disconnect.")
 
-    # --- Конец обработки реванша при дисконнекте ---
-
-
+    # Очистка карт сессий
     if sid in sid_to_tg_id:
         tg_id = sid_to_tg_id.pop(sid)
         if tg_id in tg_id_to_sid and tg_id_to_sid[tg_id] == sid:
@@ -737,12 +742,14 @@ def handle_disconnect():
     
     remove_player_from_lobby(sid) 
     
+    # Отмена открытой игры
     room_to_delete = next((rid for rid, g in open_games.items() if g['creator']['sid'] == sid), None)
     if room_to_delete:
         if room_to_delete in open_games: del open_games[room_to_delete]
         print(f"[LOBBY] Creator {sid} disconnected. Open game {room_to_delete} removed.")
         emit_lobby_update() 
         
+    # Обработка дисконнекта из активной игры
     player_game_id, opponent_sid, game_session_player, disconnected_player_index = None, None, None, -1
     for room_id, game_session in list(active_games.items()):
          if room_id not in active_games: continue 
@@ -764,7 +771,7 @@ def handle_disconnect():
         print(f"[DISCONNECT] Player {sid} ({nick}) disconnected from active game {player_game_id}. Terminating game.")
         
         if game.mode == 'pvp' and opponent_sid:
-            print(f"[RATING_CALC_DC] {player_game_id}: Game cancelled due to disconnect. Stats not updated.")
+            print(f"[RATING_CALC_DC] {player_game_id}: Game cancelled. Stats not updated.")
             if socketio.server.manager.is_connected(opponent_sid, '/'):
                 emit('opponent_disconnected', {'message': f'Opponent ({nick}) disconnected. Game cancelled, stats not saved.'}, room=opponent_sid)
                 add_player_to_lobby(opponent_sid) 
@@ -785,13 +792,14 @@ def handle_disconnect():
         if player_game_id in active_games:
             del active_games[player_game_id]
         
-        socketio.close_room(player_game_id)
+        close_room(player_game_id) # Используем импортированную функцию
         print(f"[GAME] Closed room {player_game_id} due to player disconnect.")
         
         broadcast_lobby_stats() 
         emit_lobby_update() 
         return 
 
+    # Обработка дисконнекта зрителя
     spectator_game_id = None
     for room_id, game_session in list(active_games.items()):
         if room_id not in active_games: continue 
@@ -808,10 +816,13 @@ def handle_disconnect():
             spectator_game_id = room_id
             game_session['spectators'] = new_spectators
             print(f"[SPECTATOR] Spectator {sid} disconnected from {spectator_game_id}.")
+            # Не нужно вызывать leave_room, т.к. socketio сделает это сам
             broadcast_spectator_update(spectator_game_id) 
             broadcast_lobby_stats() 
             emit_lobby_update() 
             break 
+# --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
 
 def validate_telegram_data(init_data_str):
     # (Без изменений)
@@ -842,22 +853,22 @@ def validate_telegram_data(init_data_str):
 
 @socketio.on('login_with_telegram')
 def handle_telegram_login(data):
-    # (Логика запрета новой сессии)
+    # (Без изменений)
     init_data = data.get('initData')
     sid = request.sid
     if not init_data:
         emit('auth_status', {'success': False, 'message': 'Нет данных авторизации.'})
-        disconnect(sid) # Отключаем, если нет данных
+        disconnect(sid) 
         return
     user_info = validate_telegram_data(init_data)
     if not user_info:
         emit('auth_status', {'success': False, 'message': 'Неверные данные авторизации.'})
-        disconnect(sid) # Отключаем при неверных данных
+        disconnect(sid) 
         return
     tg_id = user_info.get('id')
     if not tg_id:
         emit('auth_status', {'success': False, 'message': 'Не найден Telegram ID.'})
-        disconnect(sid) # Отключаем, если нет ID
+        disconnect(sid) 
         return
 
     if tg_id in tg_id_to_sid:
@@ -870,7 +881,6 @@ def handle_telegram_login(data):
         elif old_sid and old_sid != sid:
              print(f"[AUTH] TG ID {tg_id} has dead old SID {old_sid}. Allowing new SID {sid}.")
 
-    # Обновляем или добавляем связь
     tg_id_to_sid[tg_id] = sid
     sid_to_tg_id[sid] = tg_id
 
@@ -897,13 +907,11 @@ def handle_set_username(data):
         return
     if not nick or not re.match(r'^[a-zA-Z0-9_-]{3,20}$', nick):
         emit('auth_status', {'success': False, 'message': 'Ник: 3-20 симв. (a-z, 0-9, _, -).'})
-        return # Не отключаем, даем исправить
+        return 
     
-    # Проверяем связь SID<->TG_ID
     if sid_to_tg_id.get(sid) != tg_id:
          print(f"[AUTH] Mismatch SID/TGID on set_username. SID: {sid}, Expected TG_ID: {sid_to_tg_id.get(sid)}, Got: {tg_id}")
          emit('auth_status', {'success': False, 'message': 'Ошибка сессии, перезагрузите.'})
-         # Очищаем невалидные данные
          if tg_id in tg_id_to_sid and tg_id_to_sid.get(tg_id) == sid : del tg_id_to_sid[tg_id] 
          if sid in sid_to_tg_id: del sid_to_tg_id[sid]
          disconnect(sid) 
@@ -913,11 +921,9 @@ def handle_set_username(data):
         if User.query.filter_by(nickname=nick).first():
             emit('auth_status', {'success': False, 'message': 'Этот никнейм уже занят.'})
             return 
-        # Проверка на существующий TG_ID (на случай гонки потоков)
         existing_user_tg = User.query.filter_by(telegram_id=tg_id).first()
         if existing_user_tg:
              emit('auth_status', {'success': False, 'message': 'Этот Telegram аккаунт уже зарегистрирован.'})
-             # Очищаем карты сессий, т.к. регистрация не удалась
              if tg_id in tg_id_to_sid and tg_id_to_sid.get(tg_id) == sid: del tg_id_to_sid[tg_id]
              if sid in sid_to_tg_id: del sid_to_tg_id[sid]
              disconnect(sid)
@@ -932,7 +938,6 @@ def handle_set_username(data):
             emit('auth_status', {'success': True, 'nickname': new_user.nickname})
             emit_lobby_update()
         except Exception as e:
-            # Очищаем карты сессий при ошибке регистрации
             if tg_id in tg_id_to_sid and tg_id_to_sid.get(tg_id) == sid: del tg_id_to_sid[tg_id]
             if sid in sid_to_tg_id: del sid_to_tg_id[sid]
             db.session.rollback()
@@ -1202,7 +1207,7 @@ def handle_join_as_spectator(data):
     remove_player_from_lobby(sid) 
     print(f"[SPECTATOR] {nick} ({sid}) joined game {room_id}.")
     
-    emit('round_started', get_game_state_for_client(game_session, room_id), room=sid) # Отправляем только зрителю
+    emit('round_started', get_game_state_for_client(game_session, room_id), room=sid) 
     emit('spectate_success', {'roomId': room_id}, room=sid)
     
     broadcast_spectator_update(room_id)
@@ -1304,28 +1309,24 @@ def handle_get_lobby_data():
 # --- Новые обработчики реванша ---
 @socketio.on('request_rematch')
 def handle_request_rematch(data):
+    # (С добавлением broadcast_spectator_update)
     sid = request.sid
     old_room_id = data.get('old_room_id')
     
-    # Проверяем ID и наличие данных
     if not old_room_id or old_room_id not in rematch_data_store:
         print(f"[REMATCH] Invalid/Expired old_room_id: {old_room_id} from {sid}")
         emit('rematch_status', {'status': 'error', 'message': 'Игра для реванша не найдена.'}, room=sid)
-        # Возвращаем игрока в лобби, если он не занят чем-то другим
         add_player_to_lobby(sid)
         return
 
     rematch_info = rematch_data_store[old_room_id]
     
-    # Проверяем, является ли отправитель одним из игроков
     is_p1 = (sid == rematch_info.get('p1_sid'))
     is_p2 = (sid == rematch_info.get('p2_sid'))
     if not is_p1 and not is_p2:
         print(f"[REMATCH] Unauthorized request from non-player {sid} for {old_room_id}")
-        # Просто игнорируем запрос от зрителя
         return
         
-    # Добавляем SID в запросы
     rematch_info['requests'].add(sid)
     print(f"[REMATCH] Request received from {sid} for {old_room_id}. Total: {len(rematch_info['requests'])}")
 
@@ -1333,37 +1334,30 @@ def handle_request_rematch(data):
     current_count = len(rematch_info['requests'])
     status_data = {'status': 'waiting', 'count': current_count, 'old_room_id': old_room_id}
 
-    # Уведомляем игроков и зрителей о статусе (1/2 или 2/2)
     sids_to_notify = [rematch_info['p1_sid'], rematch_info['p2_sid']] + \
                      [spec['sid'] for spec in rematch_info.get('spectators', []) if spec.get('sid')]
 
     for notify_sid in sids_to_notify:
          if notify_sid and socketio.server.manager.is_connected(notify_sid, '/'):
-              # Убедимся, что получатель все еще в комнате ожидания реванша
               notify_rooms = socketio.server.manager.get_rooms(notify_sid, '/') or []
               if old_room_id in notify_rooms:
                    socketio.emit('rematch_status', status_data, room=notify_sid)
 
-    # Если оба запросили реванш
     if current_count == 2:
         print(f"[REMATCH] Both players requested for {old_room_id}. Starting new game.")
         
         p1_sid = rematch_info['p1_sid']
         p2_sid = rematch_info['p2_sid']
-        # Проверяем, что оба игрока все еще онлайн
         if not socketio.server.manager.is_connected(p1_sid, '/') or \
            not socketio.server.manager.is_connected(p2_sid, '/'):
             print(f"[REMATCH] Error: One player disconnected before rematch could start for {old_room_id}")
-            # Уведомляем того, кто онлайн (если есть)
             online_sid = p1_sid if socketio.server.manager.is_connected(p1_sid, '/') else p2_sid
             if online_sid:
                  emit('rematch_status', {'status': 'opponent_left', 'old_room_id': old_room_id}, room=online_sid)
-                 add_player_to_lobby(online_sid) # Возвращаем в лобби
-                 socketio.leave_room(old_room_id, sid=online_sid) # Убираем из старой комнаты
-            # Очищаем данные реванша
+                 add_player_to_lobby(online_sid) 
+                 leave_room(old_room_id, sid=online_sid) 
             if old_room_id in rematch_data_store: del rematch_data_store[old_room_id]
-            # Закрываем комнату
-            if socketio.server.manager.room_exists(old_room_id, '/'): socketio.close_room(old_room_id)
+            close_room(old_room_id)
             return
 
         p1_nick = rematch_info['p1_nick']
@@ -1379,65 +1373,66 @@ def handle_request_rematch(data):
         try:
             game = GameState(p1_info, all_leagues_data, player2_info=p2_info, mode='pvp', settings=settings)
             
-            # Собираем инфо о зрителях для новой игры
             new_spectators_list = []
             for spec_info in spectators_info:
                  spec_sid = spec_info.get('sid')
+                 # --- ИЗМЕНЕНИЕ: Проверяем, что зритель все еще онлайн ПЕРЕД добавлением ---
                  if spec_sid and socketio.server.manager.is_connected(spec_sid, '/'):
-                      new_spectators_list.append(spec_info) # Добавляем {sid, nickname}
+                      new_spectators_list.append(spec_info) 
+                 else:
+                      print(f"[REMATCH] Spectator {spec_info.get('nickname', spec_sid)} disconnected, not adding to new game.")
 
             active_games[new_room_id] = {'game': game, 'turn_id': None, 'pause_id': None, 'skip_votes': set(), 'last_round_end_reason': None, 'spectators': new_spectators_list}
             
-            # Перемещаем игроков и зрителей в новую комнату
-            sids_to_move = [p1_sid, p2_sid] + [spec['sid'] for spec in new_spectators_list]
+            sids_to_move = [p1_sid, p2_sid] + [spec['sid'] for spec in new_spectators_list] # Используем отфильтрованный список
             for move_sid in sids_to_move:
-                 if socketio.server.manager.room_exists(old_room_id, '/') and move_sid in socketio.server.manager.get_rooms(move_sid, '/'):
-                      socketio.leave_room(old_room_id, sid=move_sid)
-                 socketio.join_room(new_room_id, sid=move_sid)
+                 # Проверяем комнаты перед выходом
+                 current_rooms = socketio.server.manager.get_rooms(move_sid, '/') or []
+                 if old_room_id in current_rooms:
+                      leave_room(old_room_id, sid=move_sid)
+                 join_room(new_room_id, sid=move_sid)
             print(f"[REMATCH] Moved {len(sids_to_move)} users from {old_room_id} to {new_room_id}")
 
-            # Закрываем старую комнату
-            if socketio.server.manager.room_exists(old_room_id, '/'):
-                 socketio.close_room(old_room_id)
-                 print(f"[REMATCH] Closed old room {old_room_id}")
+            close_room(old_room_id)
+            print(f"[REMATCH] Closed old room {old_room_id}")
 
-            # Очищаем данные реванша
-            del rematch_data_store[old_room_id]
+            if old_room_id in rematch_data_store: del rematch_data_store[old_room_id]
             
-            # Уведомляем о старте реванша (не обязательно, т.к. сразу придет round_started)
-            # socketio.emit('rematch_started', {'new_room_id': new_room_id}, room=new_room_id) 
+            # emit('rematch_started', {'new_room_id': new_room_id}, room=new_room_id) # Не обязательно
             
-            broadcast_lobby_stats() # Обновит стату с учетом новой игры
-            emit_lobby_update() # Добавит новую игру в список активных
+            broadcast_lobby_stats() 
+            emit_lobby_update() # Новая игра появится в активных
             
             print(f"[GAME] Rematch started: {p1_nick} vs {p2_nick}. New Room: {new_room_id}. Clubs: {game.num_rounds}, TB: {game.settings['time_bank']}")
             
-            # Запускаем игру (он сам вызовет broadcast_spectator_update)
             start_game_loop(new_room_id)
+            # --- ИЗМЕНЕНИЕ: Обновляем инфо о зрителях после старта ---
+            # Даем небольшую паузу, чтобы клиенты успели обработать 'round_started'
+            eventlet.sleep(0.1) 
+            broadcast_spectator_update(new_room_id)
+            # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
 
         except Exception as e:
              print(f"[ERROR] Failed to start rematch game {new_room_id} from {old_room_id}: {e}")
              error_data = {'status': 'error', 'message': 'Ошибка старта реванша.'}
-             # Уведомляем игроков (если они еще в старой комнате?)
              for move_sid in [p1_sid, p2_sid]:
                   if socketio.server.manager.is_connected(move_sid, '/'):
                        emit('rematch_status', error_data, room=move_sid)
-                       add_player_to_lobby(move_sid) # Возвращаем в лобби
-                       if socketio.server.manager.room_exists(old_room_id, '/') and move_sid in socketio.server.manager.get_rooms(move_sid, '/'):
-                            socketio.leave_room(old_room_id, sid=move_sid)
-             # Очищаем данные реванша
+                       add_player_to_lobby(move_sid) 
+                       current_rooms = socketio.server.manager.get_rooms(move_sid, '/') or []
+                       if old_room_id in current_rooms: leave_room(old_room_id, sid=move_sid)
              if old_room_id in rematch_data_store: del rematch_data_store[old_room_id]
-             # Закрываем комнату
-             if socketio.server.manager.room_exists(old_room_id, '/'): socketio.close_room(old_room_id)
+             close_room(old_room_id)
              broadcast_lobby_stats()
              emit_lobby_update()
 
 @socketio.on('leave_game_over_screen')
 def handle_leave_game_over_screen(data):
+    # (Без изменений)
     sid = request.sid
     old_room_id = data.get('old_room_id')
 
-    # Игрок выходит с экрана Game Over (нажал "В лобби")
     if old_room_id and old_room_id in rematch_data_store:
         rematch_info = rematch_data_store[old_room_id]
         opponent_sid = None
@@ -1451,16 +1446,14 @@ def handle_leave_game_over_screen(data):
 
         if is_player:
             print(f"[REMATCH] Player {sid} left game over screen for {old_room_id}.")
-            # Уведомляем оппонента и зрителей
             if opponent_sid and socketio.server.manager.is_connected(opponent_sid, '/'):
                  opponent_rooms = socketio.server.manager.get_rooms(opponent_sid, '/') or []
                  if old_room_id in opponent_rooms:
                       status_data = {'status': 'opponent_left', 'old_room_id': old_room_id}
                       socketio.emit('rematch_status', status_data, room=opponent_sid)
                       print(f"[REMATCH] Notified opponent {opponent_sid}.")
-                      # Перемещаем оппонента в лобби
                       add_player_to_lobby(opponent_sid)
-                      socketio.leave_room(old_room_id, sid=opponent_sid) # Убираем из старой комнаты
+                      leave_room(old_room_id, sid=opponent_sid) 
 
             status_data_spec = {'status': 'player_left', 'old_room_id': old_room_id} 
             for spec_info in rematch_info.get('spectators', []):
@@ -1469,28 +1462,26 @@ def handle_leave_game_over_screen(data):
                       spec_rooms = socketio.server.manager.get_rooms(spec_sid, '/') or []
                       if old_room_id in spec_rooms:
                            socketio.emit('rematch_status', status_data_spec, room=spec_sid)
-                           # Перемещаем зрителя в лобби
                            add_player_to_lobby(spec_sid)
-                           socketio.leave_room(old_room_id, sid=spec_sid)
+                           leave_room(old_room_id, sid=spec_sid)
             
-            # Очищаем данные реванша
-            del rematch_data_store[old_room_id]
-            print(f"[REMATCH] Cleared rematch data for {old_room_id} because player {sid} left.")
+            if old_room_id in rematch_data_store:
+                del rematch_data_store[old_room_id]
+                print(f"[REMATCH] Cleared rematch data for {old_room_id} because player {sid} left.")
             
-            # Закрываем старую комнату
-            if socketio.server.manager.room_exists(old_room_id, '/'):
-                 socketio.close_room(old_room_id)
-                 print(f"[REMATCH] Closed old room {old_room_id}.")
+            close_room(old_room_id)
+            print(f"[REMATCH] Closed old room {old_room_id}.")
 
-    # Добавляем вышедшего игрока в лобби (если он еще не там)
     add_player_to_lobby(sid)
-    # Выходим из старой комнаты (на случай если он еще там)
-    if socketio.server.manager.room_exists(old_room_id, '/') and sid in (socketio.server.manager.get_rooms(sid, '/') or []):
-         socketio.leave_room(old_room_id, sid=sid)
+    # Выходим из старой комнаты, если все еще там
+    current_rooms = socketio.server.manager.get_rooms(sid, '/') or []
+    if old_room_id and old_room_id in current_rooms:
+         leave_room(old_room_id, sid=sid)
 
 
 @app.route('/')
 def index():
+    # (Без изменений)
     return render_template('index.html')
 
-# (Точка входа для gunicorn/Dockerfile)
+# (Запуск через gunicorn/Dockerfile)
