@@ -10,12 +10,13 @@ import hmac
 import hashlib
 import json
 from flask import Flask, render_template, request
-from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask_socketio import SocketIO, emit, join_room, leave_room, disconnect
 from flask_sqlalchemy import SQLAlchemy
 from fuzzywuzzy import fuzz
 from glicko2 import Player
 from sqlalchemy.pool import NullPool
 from urllib.parse import unquote
+import eventlet # Убедитесь, что eventlet установлен
 
 # --- Конфигурация для Telegram ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
@@ -59,37 +60,55 @@ with app.app_context():
 active_games, open_games = {}, {}
 lobby_sids = set()
 tg_id_to_sid, sid_to_tg_id = {}, {}
+# Ключ - ID *закончившейся* игры (old_room_id)
+# Значение - словарь с 'p1_sid', 'p1_nick', 'p2_sid', 'p2_nick', 'settings', 'spectators' (список словарей {sid, nickname}), 'requests' (set с sid запросивших)
+rematch_data_store = {}
+
 
 # --- Вспомогательные функции ---
 
 def broadcast_lobby_stats():
-    players_spectating = sum(len(g.get('spectators', [])) for g in active_games.values())
-    players_training = sum(1 for g in active_games.values() if g['game'].mode == 'solo')
-    players_in_pvp = sum(len(g['game'].players) for g in active_games.values() if g['game'].mode == 'pvp')
-    stats = {
-        'players_in_lobby': len(lobby_sids),
-        'players_in_pvp': players_in_pvp,
-        'players_training': players_training,
-        'players_spectating': players_spectating
-    }
+    with app.app_context():
+        players_spectating_active = sum(len(g.get('spectators', [])) for g in active_games.values())
+        players_training = sum(1 for g in active_games.values() if g['game'].mode == 'solo')
+        players_in_pvp_active = sum(len(g['game'].players) for g in active_games.values() if g['game'].mode == 'pvp')
+
+        stats = {
+            'players_in_lobby': len(lobby_sids),
+            'players_in_pvp': players_in_pvp_active,
+            'players_training': players_training,
+            'players_spectating': players_spectating_active
+        }
     socketio.emit('lobby_stats_update', stats)
+
 
 def is_player_busy(sid):
     for game_session in active_games.values():
         if any(p.get('sid') == sid for p in game_session['game'].players.values()):
-            return True
-        if any(spec['sid'] == sid for spec in game_session.get('spectators', [])):
-            return True
+            return True # Игрок в активной игре
+        if any(spec.get('sid') == sid for spec in game_session.get('spectators', [])):
+            return True # Зритель в активной игре
+
     for open_game in open_games.values():
         if open_game['creator']['sid'] == sid:
-            return True
+            return True # Создал открытую игру
+
+    for data in rematch_data_store.values():
+        if data.get('p1_sid') == sid or data.get('p2_sid') == sid:
+            return True # Занят ожиданием реванша
+            
     return False
 
 def add_player_to_lobby(sid):
-    if is_player_busy(sid):
-        return
-    lobby_sids.add(sid)
-    broadcast_lobby_stats()
+    if sid is None: return # Добавлена проверка на None
+    if socketio.server.manager.is_connected(sid, '/') and not is_player_busy(sid):
+        lobby_sids.add(sid)
+        broadcast_lobby_stats()
+    elif not socketio.server.manager.is_connected(sid, '/'):
+         print(f"[LOBBY] Player {sid} disconnected, not adding to lobby.")
+    else:
+         print(f"[LOBBY] Player {sid} is busy, not adding to lobby.")
+
 
 def remove_player_from_lobby(sid):
     was_in_lobby = sid in lobby_sids
@@ -156,7 +175,7 @@ def get_leaderboard_data():
 def format_spectator_info(spectators):
     count = len(spectators)
     if count == 0: return None
-    elif count <= 3: names = [spec['nickname'][:10] + ('...' if len(spec['nickname']) > 10 else '') for spec in spectators]; return f"👀 Смотрят: {', '.join(names)}"
+    elif count <= 3: names = [spec.get('nickname', '?')[:10] + ('...' if len(spec.get('nickname', '?')) > 10 else '') for spec in spectators]; return f"👀 Смотрят: {', '.join(names)}"
     else: return f"👀 Зрителей: {count}"
 
 def broadcast_spectator_update(room_id):
@@ -182,12 +201,13 @@ class GameState:
         default_time = 90.0
         try:
             time_bank_setting = float(temp_settings.get('time_bank', default_time))
+            time_bank_setting = max(MIN_TIME_BANK, min(MAX_TIME_BANK, time_bank_setting))
         except (ValueError, TypeError):
             time_bank_setting = default_time
 
         default_settings = {'num_rounds': max_clubs_in_league, 'time_bank': time_bank_setting, 'league': league}
         
-        self.settings = default_settings
+        self.settings = default_settings.copy()
         if settings:
             self.settings.update(settings)
         self.settings['time_bank'] = time_bank_setting 
@@ -196,69 +216,118 @@ class GameState:
         num_rounds_setting = self.settings.get('num_rounds', 0)
         available_clubs_keys = list(self.all_clubs_data.keys())
 
-        if selected_clubs and len(selected_clubs) > 0:
+        valid_selected_clubs = [] # Инициализируем здесь
+        if selected_clubs and isinstance(selected_clubs, list) and len(selected_clubs) > 0:
             valid_selected_clubs = [c for c in selected_clubs if c in self.all_clubs_data]
-            if len(valid_selected_clubs) < min_clubs:
-                 print(f"[WARNING] Недостаточно валидных клубов ({len(valid_selected_clubs)}) для {self.mode}. Мин: {min_clubs}. Все клубы.")
-                 self.num_rounds = len(available_clubs_keys)
-                 self.game_clubs = random.sample(available_clubs_keys, self.num_rounds) if available_clubs_keys else []
-            else:
+            if len(valid_selected_clubs) >= min_clubs:
                 self.game_clubs = random.sample(valid_selected_clubs, len(valid_selected_clubs))
                 self.num_rounds = len(self.game_clubs)
-        elif num_rounds_setting >= min_clubs:
-            self.num_rounds = min(num_rounds_setting, len(available_clubs_keys))
-            self.game_clubs = random.sample(available_clubs_keys, self.num_rounds) if available_clubs_keys else []
-        else:
-            print(f"[WARNING] Настройки < {min_clubs} клубов, выбраны все.")
-            self.num_rounds = len(available_clubs_keys)
-            self.game_clubs = random.sample(available_clubs_keys, self.num_rounds) if available_clubs_keys else []
+            else:
+                 print(f"[WARNING] Недостаточно валидных клубов ({len(valid_selected_clubs)}). Используем все.")
+                 selected_clubs = [] # Сбрасываем флаг, чтобы использовать num_rounds или все
 
-        self.current_round, self.current_player_index = -1, 0
-        self.current_club_name, self.players_for_comparison = None, []
-        self.named_players_full_names, self.named_players = set(), []
-        self.round_history, self.end_reason = [], 'normal'
-        self.last_successful_guesser_index, self.previous_round_loser_index = None, None
+        # Эта ветка выполняется, если selected_clubs невалидны или не заданы
+        if not selected_clubs or len(valid_selected_clubs) < min_clubs:
+            try: # Проверяем num_rounds_setting
+                num_rounds_val = int(num_rounds_setting)
+                if num_rounds_val >= min_clubs:
+                    self.num_rounds = min(num_rounds_val, len(available_clubs_keys))
+                    self.game_clubs = random.sample(available_clubs_keys, self.num_rounds) if available_clubs_keys else []
+                else:
+                    raise ValueError # Переходим к default
+            except (ValueError, TypeError): # Используем все клубы
+                print(f"[WARNING] Настройки клубов невалидны (<{min_clubs} или не заданы), выбраны все клубы.")
+                self.num_rounds = len(available_clubs_keys)
+                self.game_clubs = random.sample(available_clubs_keys, self.num_rounds) if available_clubs_keys else []
+            
+        self.settings['num_rounds'] = self.num_rounds
+        if not (selected_clubs and isinstance(selected_clubs, list) and len(valid_selected_clubs) >= min_clubs):
+             self.settings['selected_clubs'] = [] # Очищаем, если не использовались
+
+
+        self.current_round = -1
+        self.current_player_index = 0
+        self.current_club_name = None
+        self.players_for_comparison = []
+        self.named_players_full_names = set()
+        self.named_players = []
+        self.round_history = []
+        self.end_reason = 'normal'
+        self.last_successful_guesser_index = None
+        self.previous_round_loser_index = None
         
         self.time_banks = {0: self.settings['time_bank']}
         if self.mode != 'solo': self.time_banks[1] = self.settings['time_bank']
         self.turn_start_time = 0
 
     def start_new_round(self):
-        if self.is_game_over(): return False
+        if self.is_game_over(): 
+             return False
+        
         self.current_round += 1
+        
         if len(self.players) > 1:
-            if self.current_round == 0: self.current_player_index = random.randint(0, 1)
-            elif self.previous_round_loser_index is not None: self.current_player_index = self.previous_round_loser_index
-            elif self.last_successful_guesser_index is not None: self.current_player_index = 1 - self.last_successful_guesser_index
-            else: self.current_player_index = self.current_round % 2
-        else: self.current_player_index = 0
+            if self.current_round == 0:
+                self.current_player_index = random.randint(0, 1)
+            elif self.previous_round_loser_index is not None:
+                self.current_player_index = self.previous_round_loser_index
+            elif self.last_successful_guesser_index is not None: # Если в прошлом раунде был угадавший (не timeout/surrender)
+                self.current_player_index = 1 - self.last_successful_guesser_index
+            else: # Ничья без угадываний или другой случай
+                self.current_player_index = self.current_round % 2
+        else:
+            self.current_player_index = 0
+            
         self.previous_round_loser_index = None
         
         time_bank_setting = self.settings.get('time_bank', 90.0) 
         self.time_banks = {0: time_bank_setting}
         if self.mode != 'solo': self.time_banks[1] = time_bank_setting
 
-        if self.current_round < len(self.game_clubs):
+        if self.current_round < self.num_rounds and self.current_round < len(self.game_clubs):
             self.current_club_name = self.game_clubs[self.current_round]
             player_objects = self.all_clubs_data.get(self.current_club_name, [])
             self.players_for_comparison = sorted(player_objects, key=lambda p: p['primary_name'])
-        else: return False
-        self.named_players_full_names, self.named_players = set(), []
+        else: 
+            print(f"[ERROR] Попытка начать раунд {self.current_round + 1}, но клубов только {len(self.game_clubs)}/{self.num_rounds}")
+            # Эта ситуация должна приводить к game over раньше
+            self.end_reason = 'internal_error' # Устанавливаем причину
+            return False 
+            
+        self.named_players_full_names = set()
+        self.named_players = []
+        self.last_successful_guesser_index = None # Сбрасываем угадавшего
         return True
 
     def process_guess(self, guess):
         guess_norm = guess.strip().lower().replace('ё', 'е')
         if not guess_norm: return {'result': 'not_found'}
+        # Точное совпадение
         for d in self.players_for_comparison:
-            if guess_norm in d['valid_normalized_names'] and d['full_name'] not in self.named_players_full_names: return {'result': 'correct', 'player_data': d}
+            if guess_norm in d['valid_normalized_names'] and d['full_name'] not in self.named_players_full_names:
+                return {'result': 'correct', 'player_data': d}
+        
+        # Опечатка
         best_match, max_ratio = None, 0
         for d in self.players_for_comparison:
             if d['full_name'] in self.named_players_full_names: continue
-            primary_norm = d['primary_name'].lower().replace('ё', 'е'); ratio = fuzz.ratio(guess_norm, primary_norm)
-            if ratio > max_ratio: max_ratio, best_match = ratio, d
-        if max_ratio >= TYPO_THRESHOLD: return {'result': 'correct_typo', 'player_data': best_match}
+            primary_norm = d['primary_name'].lower().replace('ё', 'е')
+            # Считаем ratio по всем алиасам
+            alias_ratios = [fuzz.ratio(guess_norm, alias.lower().replace('ё', 'е')) for alias in d.get('valid_normalized_names', {primary_norm})]
+            current_max_ratio = max(alias_ratios) if alias_ratios else 0 # Используем max по алиасам
+
+            if current_max_ratio > max_ratio:
+                 max_ratio = current_max_ratio
+                 best_match = d
+
+        if max_ratio >= TYPO_THRESHOLD and best_match and best_match['full_name'] not in self.named_players_full_names:
+             return {'result': 'correct_typo', 'player_data': best_match}
+
+        # Уже назван
         for d in self.players_for_comparison:
-             if guess_norm in d['valid_normalized_names']: return {'result': 'already_named'}
+             if guess_norm in d['valid_normalized_names']:
+                 return {'result': 'already_named'}
+                 
         return {'result': 'not_found'}
 
     def add_named_player(self, player_data, player_index):
@@ -274,206 +343,318 @@ class GameState:
         return len(self.players_for_comparison) > 0 and len(self.named_players) == len(self.players_for_comparison)
 
     def is_game_over(self):
-        """Проверяет, завершена ли игра."""
-        if self.current_round >= (self.num_rounds - 1):
-            self.end_reason = 'normal'
+        """Проверяет, должна ли игра закончиться ПОСЛЕ ТЕКУЩЕГО раунда."""
+        next_round_index = self.current_round + 1 
+        if next_round_index >= self.num_rounds:
+            if self.end_reason == 'normal': self.end_reason = 'normal'
             return True
         if len(self.players) > 1:
             score_diff = abs(self.scores[0] - self.scores[1])
-            rounds_left = self.num_rounds - (self.current_round + 1)
+            rounds_left = self.num_rounds - next_round_index
             if score_diff > rounds_left:
-                self.end_reason = 'unreachable_score'
+                if self.end_reason == 'normal': self.end_reason = 'unreachable_score'
                 return True
         return False
 
+# --- Получение состояния для клиента ---
 def get_game_state_for_client(game_session, room_id):
+    # (Без изменений)
     game = game_session['game']
     spectators = game_session.get('spectators', [])
     spectator_text = format_spectator_info(spectators)
-    return {'roomId': room_id, 'mode': game.mode, 'players': {i: {'nickname': p['nickname'], 'sid': p.get('sid')} for i, p in game.players.items()}, 'scores': game.scores, 'round': game.current_round + 1, 'totalRounds': game.num_rounds, 'clubName': game.current_club_name, 'namedPlayers': game.named_players, 'fullPlayerList': [p['full_name'] for p in game.players_for_comparison], 'currentPlayerIndex': game.current_player_index, 'timeBanks': game.time_banks, 'spectatorInfoText': spectator_text}
+    players_data = {}
+    for i, p_info in game.players.items():
+        players_data[i] = {'nickname': p_info['nickname']}
+        if p_info.get('sid'):
+             players_data[i]['sid'] = p_info.get('sid')
 
+    return {
+        'roomId': room_id, 'mode': game.mode, 'players': players_data,
+        'scores': game.scores, 'round': game.current_round + 1,
+        'totalRounds': game.num_rounds, 'clubName': game.current_club_name,
+        'namedPlayers': game.named_players,
+        'fullPlayerList': [p['full_name'] for p in game.players_for_comparison],
+        'currentPlayerIndex': game.current_player_index, 'timeBanks': game.time_banks,
+        'spectatorInfoText': spectator_text
+    }
+
+# --- Логика ходов и таймеров ---
 def start_next_human_turn(room_id):
+    # (Без изменений)
     game_session = active_games.get(room_id)
     if not game_session: return
     game = game_session['game']
     game.turn_start_time = time.time()
-    turn_id = f"{room_id}_{game.current_round}_{len(game.named_players)}"
+    turn_id = f"{room_id}_{game.current_round}_{len(game.named_players)}_{game.current_player_index}"
     game_session['turn_id'] = turn_id
+    
     time_left = game.time_banks[game.current_player_index]
     current_player_nick = game.players[game.current_player_index]['nickname']
-    print(f"[TURN] {room_id}: Ход {current_player_nick} (Idx: {game.current_player_index}, Time: {time_left:.1f}s)")
+    print(f"[TURN] {room_id}: Ход {current_player_nick} (Idx: {game.current_player_index}), Time: {time_left:.1f}s")
+    
     if time_left > 0:
         socketio.start_background_task(turn_watcher, room_id, turn_id, time_left)
     else:
-        print(f"[TURN_END] {room_id}: Время уже вышло для {current_player_nick}.")
+        print(f"[TURN_END] {room_id}: Время уже вышло для {current_player_nick} перед началом хода.")
         on_timer_end(room_id)
         return
+        
     socketio.emit('turn_updated', get_game_state_for_client(game_session, room_id), room=room_id)
 
-def turn_watcher(room_id, turn_id, time_limit):
-    socketio.sleep(time_limit)
+def turn_watcher(room_id, expected_turn_id, time_limit):
+    # (Без изменений)
+    eventlet.sleep(time_limit)
     game_session = active_games.get(room_id)
-    if game_session and game_session.get('turn_id') == turn_id:
-        print(f"[TIMEOUT] {room_id}: Время вышло для хода {turn_id}.")
+    if game_session and game_session.get('turn_id') == expected_turn_id:
+        print(f"[TIMEOUT] {room_id}: Время вышло для хода {expected_turn_id}.")
         on_timer_end(room_id)
 
 def on_timer_end(room_id):
+    # (Без изменений)
     game_session = active_games.get(room_id)
     if not game_session: return
     game = game_session['game']
+    
     loser_index = game.current_player_index
     game.time_banks[loser_index] = 0.0
+    
     socketio.emit('timer_expired', {'playerIndex': loser_index, 'timeBanks': game.time_banks}, room=room_id)
-    if game.mode != 'solo' and len(game.players) > 1:
+    
+    if game.mode == 'pvp' and len(game.players) > 1:
         winner_index = 1 - loser_index
-        game.scores[winner_index] += 1
+        game.scores[winner_index] += 1.0
         game.previous_round_loser_index = loser_index
-        game_session['last_round_winner_index'] = winner_index # Сохраняем победителя
+        game_session['last_round_winner_index'] = winner_index
+        
     if not game_session.get('last_round_end_reason'):
         game_session['last_round_end_reason'] = 'timeout'
+        
     game_session['last_round_end_player_nickname'] = game.players[loser_index]['nickname']
-    print(f"[ROUND_END] {room_id}: Раунд завершен ({game_session['last_round_end_reason']}) игроком {game.players[loser_index]['nickname']}.")
+    print(f"[ROUND_END] {room_id}: Раунд {game.current_round + 1} завершен ({game_session.get('last_round_end_reason', '?')}) игроком {game.players[loser_index]['nickname']}.")
+    
     show_round_summary_and_schedule_next(room_id)
 
+# --- Основной игровой цикл ---
 def start_game_loop(room_id):
+    # (Изменения в блоке game_over для сохранения spectator info)
     game_session = active_games.get(room_id)
     if not game_session:
-        print(f"[ERROR] Попытка запуска цикла для несущ. игры {room_id}")
+        print(f"[ERROR] Попытка запуска цикла для несуществующей игры {room_id}")
         return
     game = game_session['game']
 
-    if not game.start_new_round():
-        game_over_data = {'final_scores': game.scores, 'players': {i: {'nickname': p['nickname']} for i, p in game.players.items()}, 'history': game.round_history, 'mode': game.mode, 'end_reason': game.end_reason, 'rating_changes': None}
-        print(f"[GAME_OVER] {room_id}: Игра окончена. Причина: {game.end_reason}, Счет: {game.scores.get(0, 0)}-{game.scores.get(1, 0)}")
-        for i, p_info in game.players.items():
-            if p_info.get('sid') and p_info['sid'] != 'BOT' and socketio.server.manager.is_connected(p_info['sid'], '/'):
-                add_player_to_lobby(p_info['sid'])
-        spectators = game_session.get('spectators', [])
-        for spec in spectators:
-             if socketio.server.manager.is_connected(spec['sid'], '/'):
-                add_player_to_lobby(spec['sid'])
+    if game.is_game_over(): 
+        game_over_data = {
+            'final_scores': game.scores,
+            'players': {i: {'nickname': p['nickname']} for i, p in game.players.items()},
+            'history': game.round_history,
+            'mode': game.mode,
+            'end_reason': game.end_reason,
+            'rating_changes': None,
+            'old_room_id': room_id 
+        }
+        print(f"[GAME_OVER] {room_id}: Игра окончена (перед раундом {game.current_round + 2}). Причина: {game.end_reason}, Счет: {game.scores.get(0, 0)}-{game.scores.get(1, 0)}")
+        
+        player_sids = []
+        # --- ИЗМЕНЕНИЕ: Сохраняем {sid, nickname} зрителей ---
+        spectators_info = [{'sid': spec['sid'], 'nickname': spec['nickname']} 
+                           for spec in game_session.get('spectators', []) if spec.get('sid')]
+        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
-        if game.mode == 'pvp' and len(game.players) > 1:
+        for i, p_info in game.players.items():
+            if p_info.get('sid') and p_info['sid'] != 'BOT':
+                 player_sids.append(p_info['sid'])
+        
+        # Зрителей возвращаем в лобби
+        for spec_info in spectators_info:
+             if socketio.server.manager.is_connected(spec_info['sid'], '/'):
+                 add_player_to_lobby(spec_info['sid'])
+
+        # Расчет рейтинга
+        if game.mode == 'pvp' and len(game.players) == 2:
             print(f"[RATING_CALC] {room_id}: Начало подсчета рейтинга.")
+            # ... (логика расчета рейтинга без изменений) ...
             p1_nick, p2_nick = game.players[0]['nickname'], game.players[1]['nickname']
             p1_new_r, p2_new_r, p1_old_r, p2_old_r = None, None, 1500, 1500
             with app.app_context():
                 try:
-                    p1_user, p2_user = User.query.filter_by(nickname=p1_nick).first(), User.query.filter_by(nickname=p2_nick).first()
+                    p1_user = User.query.filter_by(nickname=p1_nick).first()
+                    p2_user = User.query.filter_by(nickname=p2_nick).first()
                     if p1_user and p2_user:
                         p1_old_r, p2_old_r = int(p1_user.rating), int(p2_user.rating)
-                        print(f"[RATING_CALC] {room_id}: Старые: {p1_nick}({p1_old_r}), {p2_nick}({p2_old_r})")
+                        print(f"[RATING_CALC] {room_id}: Старые рейтинги: {p1_nick}({p1_old_r}), {p2_nick}({p2_old_r})")
                         p1_user.games_played += 1
                         p2_user.games_played += 1
-                        print(f"[STATS] {room_id}: Засчитана игра.")
+                        print(f"[STATS] {room_id}: Игры засчитаны для {p1_nick} и {p2_nick}.")
+                        
                         outcome = 0.5
                         if game.scores[0] > game.scores[1]: outcome = 1.0
                         elif game.scores[1] > game.scores[0]: outcome = 0.0
                         print(f"[RATING_CALC] {room_id}: Исход для P1 ({p1_nick}): {outcome}")
+                        
                         ratings = update_ratings(p1_user, p2_user, outcome)
                         if ratings:
                             p1_new_r, p2_new_r = ratings
-                            print(f"[RATING_CALC] {room_id}: Новые: {p1_nick}({p1_new_r}), {p2_nick}({p2_new_r})")
+                            print(f"[RATING_CALC] {room_id}: Новые рейтинги: {p1_nick}({p1_new_r}), {p2_nick}({p2_new_r})")
                         else:
-                            print(f"[ERROR][RATING_CALC] {room_id}: update_ratings вернула None.")
+                            print(f"[ERROR][RATING_CALC] {room_id}: Функция update_ratings вернула None.")
                             p1_new_r, p2_new_r = p1_old_r, p2_old_r
+                            
                         db.session.commit()
-                        print(f"[RATING_CALC] {room_id}: Изменения сохранены.")
-                        game_over_data['rating_changes'] = {'0': {'nickname': p1_nick, 'old': p1_old_r, 'new': p1_new_r}, '1': {'nickname': p2_nick, 'old': p2_old_r, 'new': p2_new_r}}
+                        print(f"[RATING_CALC] {room_id}: Изменения рейтинга сохранены в БД.")
+                        game_over_data['rating_changes'] = {
+                            '0': {'nickname': p1_nick, 'old': p1_old_r, 'new': p1_new_r},
+                            '1': {'nickname': p2_nick, 'old': p2_old_r, 'new': p2_new_r}
+                        }
                         socketio.emit('leaderboard_data', get_leaderboard_data())
                     else:
-                        print(f"[ERROR][RATING_CALC] {room_id}: Игроки не найдены.")
-                        game_over_data['rating_changes'] = {'0': {'nickname': p1_nick, 'old': p1_old_r, 'new': p1_old_r}, '1': {'nickname': p2_nick, 'old': p2_old_r, 'new': p2_old_r}}
+                        print(f"[ERROR][RATING_CALC] {room_id}: Один или оба игрока не найдены в БД ({p1_nick}, {p2_nick}).")
+                        game_over_data['rating_changes'] = {
+                            '0': {'nickname': p1_nick, 'old': p1_old_r, 'new': p1_old_r},
+                            '1': {'nickname': p2_nick, 'old': p2_old_r, 'new': p2_old_r}
+                        }
                 except Exception as e:
                     db.session.rollback()
                     print(f"[ERROR][RATING_CALC] {room_id}: Ошибка транзакции: {e}")
-                    game_over_data['rating_changes'] = {'0': {'nickname': p1_nick, 'old': p1_old_r, 'new': p1_old_r}, '1': {'nickname': p2_nick, 'old': p2_old_r, 'new': p2_old_r}}
-        else:
-            print(f"[GAME_OVER] {room_id}: Рейтинги не подсчитывались.")
+                    game_over_data['rating_changes'] = {
+                        '0': {'nickname': p1_nick, 'old': p1_old_r, 'new': p1_old_r},
+                        '1': {'nickname': p2_nick, 'old': p2_old_r, 'new': p2_old_r}
+                    }
+        else: 
+            print(f"[GAME_OVER] {room_id}: Тренировка окончена.")
+
+        # --- ИЗМЕНЕНИЕ: Сохраняем spectators_info ---
+        if game.mode == 'pvp' and len(game.players) == 2:
+            rematch_data_store[room_id] = {
+                'p1_sid': game.players[0].get('sid'),
+                'p1_nick': game.players[0]['nickname'],
+                'p2_sid': game.players[1].get('sid'),
+                'p2_nick': game.players[1]['nickname'],
+                'settings': game.settings.copy(), 
+                'spectators': spectators_info, # Сохраняем инфо зрителей
+                'requests': set()
+            }
+            print(f"[REMATCH] Stored data for ended game {room_id}")
+        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
         if room_id in active_games:
             del active_games[room_id]
+            
         socketio.emit('game_over', game_over_data, room=room_id)
-        socketio.close_room(room_id)
-        print(f"[GAME_OVER] {room_id}: Комната закрыта.")
-        broadcast_lobby_stats()
-        emit_lobby_update()
-        return
+        
+        if game.mode == 'solo':
+             socketio.close_room(room_id)
+             print(f"[GAME_OVER] {room_id}: Комната Solo закрыта.")
+
+        broadcast_lobby_stats() 
+        emit_lobby_update() 
+        return 
+
+    if not game.start_new_round():
+         print(f"[ERROR] {room_id}: start_new_round вернула False.")
+         game_over_data = { 'final_scores': game.scores, 'players': {i: {'nickname': p['nickname']} for i, p in game.players.items()}, 'history': game.round_history, 'mode': game.mode, 'end_reason': 'internal_error', 'rating_changes': None, 'old_room_id': room_id }
+         socketio.emit('game_over', game_over_data, room=room_id)
+         if room_id in active_games: del active_games[room_id]
+         socketio.close_room(room_id)
+         print(f"[GAME_OVER] {room_id}: Закрыта из-за ошибки start_new_round.")
+         broadcast_lobby_stats()
+         emit_lobby_update()
+         return
 
     print(f"[ROUND_START] {room_id}: Раунд {game.current_round + 1}/{game.num_rounds}. Клуб: {game.current_club_name}.")
     socketio.emit('round_started', get_game_state_for_client(game_session, room_id), room=room_id)
     start_next_human_turn(room_id)
 
 def show_round_summary_and_schedule_next(room_id):
+    # (Добавлен флаг isGameOverAfterPause - без изменений здесь)
     game_session = active_games.get(room_id)
     if not game_session: return
     game = game_session['game']
     p1_n = len([p for p in game.named_players if p['by'] == 0])
     p2_n = len([p for p in game.named_players if p.get('by') == 1]) if game.mode != 'solo' else 0
-    round_res = { 'club_name': game.current_club_name, 'p1_named': p1_n, 'p2_named': p2_n, 'result_type': game_session.get('last_round_end_reason', 'completed'), 'player_nickname': game_session.get('last_round_end_player_nickname', None), 'winner_index': game_session.get('last_round_winner_index') }
+    round_res = { 
+        'club_name': game.current_club_name, 'p1_named': p1_n, 'p2_named': p2_n, 
+        'result_type': game_session.get('last_round_end_reason', 'completed'), 
+        'player_nickname': game_session.get('last_round_end_player_nickname', None), 
+        'winner_index': game_session.get('last_round_winner_index') 
+    }
     game.round_history.append(round_res)
     print(f"[SUMMARY] {room_id}: Раунд {game.current_round + 1} завершен. Итог: {round_res['result_type']}")
+    
     game_session['skip_votes'] = set()
     game_session['last_round_end_reason'] = None
     game_session['last_round_end_player_nickname'] = None
     game_session['last_round_winner_index'] = None
+    
     pause_end_time = time.time() + PAUSE_BETWEEN_ROUNDS
     
-    # --- ИЗМЕНЕНИЕ: Добавляем round/totalRounds в summary_data ---
+    is_game_over_after_pause = game.is_game_over() 
+    
     summary_data = { 
         'clubName': game.current_club_name, 
         'fullPlayerList': [p['full_name'] for p in game.players_for_comparison], 
         'namedPlayers': game.named_players, 
         'players': {i: {'nickname': p['nickname']} for i, p in game.players.items()}, 
-        'scores': game.scores, 
-        'mode': game.mode, 
-        'pauseEndTime': pause_end_time,
-        'currentRound': game.current_round + 1, # Добавляем номер *завершенного* раунда (1-based)
-        'totalRounds': game.num_rounds        # Добавляем общее кол-во раундов
+        'scores': game.scores, 'mode': game.mode, 'pauseEndTime': pause_end_time,
+        'isGameOverAfterPause': is_game_over_after_pause 
     }
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
     socketio.emit('round_summary', summary_data, room=room_id)
+    
     pause_id = f"pause_{room_id}_{game.current_round}"
     game_session['pause_id'] = pause_id
     socketio.start_background_task(pause_watcher, room_id, pause_id)
 
-def pause_watcher(room_id, pause_id):
-    socketio.sleep(PAUSE_BETWEEN_ROUNDS)
+def pause_watcher(room_id, expected_pause_id):
+    # (Без изменений)
+    eventlet.sleep(PAUSE_BETWEEN_ROUNDS)
     game_session = active_games.get(room_id)
-    if game_session and game_session.get('pause_id') == pause_id:
-        print(f"[GAME] {room_id}: Пауза окончена.")
-        start_game_loop(room_id)
+    if game_session and game_session.get('pause_id') == expected_pause_id:
+        print(f"[GAME] {room_id}: Пауза окончена по таймеру.")
+        start_game_loop(room_id) 
+
+# --- Остальные функции и обработчики (без изменений, кроме handle_request_rematch) ---
 
 def get_open_games_for_lobby():
     open_list = []
     with app.app_context():
         for room_id, game_info in list(open_games.items()):
+            if room_id not in open_games: continue
             creator_user = User.query.filter_by(nickname=game_info['creator']['nickname']).first()
             if creator_user:
-                open_list.append({'settings': game_info['settings'], 'creator_nickname': creator_user.nickname, 'creator_rating': int(creator_user.rating), 'creator_sid': game_info['creator']['sid']})
+                if socketio.server.manager.is_connected(game_info['creator']['sid'], '/'):
+                    open_list.append({'settings': game_info['settings'], 'creator_nickname': creator_user.nickname, 'creator_rating': int(creator_user.rating), 'creator_sid': game_info['creator']['sid']})
+                else:
+                    print(f"[LOBBY CLEANUP] Creator {game_info['creator']['nickname']} disconnected, removing open game {room_id}")
+                    del open_games[room_id]
             else:
-                print(f"[LOBBY CLEANUP] User {game_info['creator']['nickname']} not found, removing {room_id}")
+                print(f"[LOBBY CLEANUP] User {game_info['creator']['nickname']} not found, removing open game {room_id}")
                 del open_games[room_id]
     return open_list
 
 def get_active_games_for_lobby():
     active_list = []
-    for room_id, game_session in active_games.items():
-        game = game_session.get('game')
-        if game and game.mode == 'pvp' and len(game.players) == 2:
-            active_list.append({'roomId': room_id, 'player1_nickname': game.players[0]['nickname'], 'player2_nickname': game.players[1]['nickname'], 'spectator_count': len(game_session.get('spectators', []))})
+    for room_id, game_session in list(active_games.items()):
+         if room_id not in active_games: continue
+         game = game_session.get('game')
+         if game and game.mode == 'pvp' and len(game.players) == 2:
+            active_list.append({
+                'roomId': room_id,
+                'player1_nickname': game.players[0]['nickname'],
+                'player2_nickname': game.players[1]['nickname'],
+                'spectator_count': len(game_session.get('spectators', []))
+            })
     return active_list
 
 def emit_lobby_update():
     open_games_list = get_open_games_for_lobby()
     active_games_list = get_active_games_for_lobby()
-    socketio.emit('update_lobby', {'open_games': open_games_list, 'active_games': active_games_list})
-
-# --- Обработчики Socket.IO ---
-# (Остальной код server.py без изменений...)
-# ... [handle_connect, handle_disconnect, validate_telegram_data, handle_telegram_login, handle_set_username, ...]
-# ... [handle_request_skip_pause, ..., handle_submit_guess, ..., index()]
+    # Отправляем всем SIDам в лобби
+    for sid in list(lobby_sids): # Итерируем по копии
+         if socketio.server.manager.is_connected(sid, '/'):
+              socketio.emit('update_lobby', {'open_games': open_games_list, 'active_games': active_games_list}, room=sid)
+         else:
+              lobby_sids.discard(sid) # Удаляем отключившихся
 
 @socketio.on('connect')
 def handle_connect():
@@ -486,80 +667,154 @@ def handle_disconnect():
     sid = request.sid
     print(f"[CONNECTION] Client disconnected: {sid}")
     
+    disconnected_player_rematch_info = None
+    opponent_sid_rematch = None
+    old_room_id_rematch = None
+
+    for old_room_id, data in list(rematch_data_store.items()):
+        leaving_player_type = None
+        if data.get('p1_sid') == sid:
+            leaving_player_type = 'p1'
+            opponent_sid_rematch = data.get('p2_sid')
+        elif data.get('p2_sid') == sid:
+            leaving_player_type = 'p2'
+            opponent_sid_rematch = data.get('p1_sid')
+        
+        if leaving_player_type:
+             disconnected_player_rematch_info = data
+             old_room_id_rematch = old_room_id
+             print(f"[REMATCH] Player {sid} disconnected while waiting for rematch in {old_room_id}.")
+             break 
+
+    if disconnected_player_rematch_info and old_room_id_rematch:
+         if opponent_sid_rematch and socketio.server.manager.is_connected(opponent_sid_rematch, '/'):
+              opponent_rooms = socketio.server.manager.get_rooms(opponent_sid_rematch, '/') or []
+              if old_room_id_rematch in opponent_rooms:
+                   status_data = {'status': 'opponent_left', 'old_room_id': old_room_id_rematch}
+                   socketio.emit('rematch_status', status_data, room=opponent_sid_rematch)
+                   print(f"[REMATCH] Notified opponent {opponent_sid_rematch} about disconnect.")
+                   # Перемещаем оппонента в лобби
+                   add_player_to_lobby(opponent_sid_rematch)
+                   # Убираем его из старой комнаты
+                   socketio.leave_room(old_room_id_rematch, sid=opponent_sid_rematch)
+
+              else:
+                   print(f"[REMATCH] Opponent {opponent_sid_rematch} already left room {old_room_id_rematch}.")
+                   add_player_to_lobby(opponent_sid_rematch)
+
+
+         status_data_spec = {'status': 'player_left', 'old_room_id': old_room_id_rematch}
+         for spec_info in disconnected_player_rematch_info.get('spectators', []):
+              spec_sid = spec_info.get('sid')
+              if spec_sid and spec_sid != sid and spec_sid != opponent_sid_rematch and socketio.server.manager.is_connected(spec_sid, '/'):
+                   spec_rooms = socketio.server.manager.get_rooms(spec_sid, '/') or []
+                   if old_room_id_rematch in spec_rooms:
+                        socketio.emit('rematch_status', status_data_spec, room=spec_sid)
+                        # Перемещаем зрителя в лобби
+                        add_player_to_lobby(spec_sid)
+                        socketio.leave_room(old_room_id_rematch, sid=spec_sid)
+
+
+         if old_room_id_rematch in rematch_data_store:
+             del rematch_data_store[old_room_id_rematch]
+             print(f"[REMATCH] Cleared rematch data for {old_room_id_rematch} due to disconnect.")
+             
+         # Закрываем старую комнату
+         if socketio.server.manager.room_exists(old_room_id_rematch, '/'):
+              socketio.close_room(old_room_id_rematch)
+              print(f"[REMATCH] Closed old room {old_room_id_rematch} due to player disconnect.")
+
+    # --- Конец обработки реванша при дисконнекте ---
+
+
     if sid in sid_to_tg_id:
         tg_id = sid_to_tg_id.pop(sid)
-        # --- ИЗМЕНЕНИЕ: Не удаляем tg_id_to_sid если sid не совпадает (т.е. новый уже подключился) ---
         if tg_id in tg_id_to_sid and tg_id_to_sid[tg_id] == sid:
             del tg_id_to_sid[tg_id]
             print(f"[AUTH] Cleaned up SID/TGID mapping for {tg_id}.")
         else:
-            print(f"[AUTH] SID {sid} disconnected, but TGID {tg_id} already has a newer SID.")
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+            print(f"[AUTH] SID {sid} disconnected, but TGID {tg_id} may already have a newer SID.")
     
-    remove_player_from_lobby(sid)
+    remove_player_from_lobby(sid) 
+    
     room_to_delete = next((rid for rid, g in open_games.items() if g['creator']['sid'] == sid), None)
     if room_to_delete:
-        del open_games[room_to_delete]
-        print(f"[LOBBY] Creator {sid} disconnected. Room {room_to_delete} removed.")
-        emit_lobby_update()
+        if room_to_delete in open_games: del open_games[room_to_delete]
+        print(f"[LOBBY] Creator {sid} disconnected. Open game {room_to_delete} removed.")
+        emit_lobby_update() 
+        
     player_game_id, opponent_sid, game_session_player, disconnected_player_index = None, None, None, -1
-    
     for room_id, game_session in list(active_games.items()):
-        game = game_session['game']
-        idx = next((i for i, p in game.players.items() if p.get('sid') == sid), -1)
-        if idx != -1:
-            player_game_id = room_id
-            game_session_player = game_session
-            disconnected_player_index = idx
-            if len(game.players) > 1:
-                opponent_index = 1 - idx
-                if game.players[opponent_index].get('sid') and game.players[opponent_index]['sid'] != 'BOT':
-                    opponent_sid = game.players[opponent_index]['sid']
-            break
+         if room_id not in active_games: continue 
+         game = game_session['game']
+         idx = next((i for i, p in game.players.items() if p.get('sid') == sid), -1)
+         if idx != -1:
+             player_game_id = room_id
+             game_session_player = game_session
+             disconnected_player_index = idx
+             if len(game.players) > 1:
+                 opponent_index = 1 - idx
+                 if opponent_index in game.players and game.players[opponent_index].get('sid') and game.players[opponent_index]['sid'] != 'BOT':
+                     opponent_sid = game.players[opponent_index]['sid']
+             break 
 
     if player_game_id and game_session_player:
         game = game_session_player['game']
         nick = game.players[disconnected_player_index].get('nickname', '?')
-        print(f"[DISCONNECT] Player {sid} ({nick}) disconnected from {player_game_id}. Game terminated.")
+        print(f"[DISCONNECT] Player {sid} ({nick}) disconnected from active game {player_game_id}. Terminating game.")
+        
         if game.mode == 'pvp' and opponent_sid:
-            print(f"[RATING_CALC_DC] {player_game_id}: Game cancelled. Stats not updated.")
+            print(f"[RATING_CALC_DC] {player_game_id}: Game cancelled due to disconnect. Stats not updated.")
             if socketio.server.manager.is_connected(opponent_sid, '/'):
-                add_player_to_lobby(opponent_sid)
                 emit('opponent_disconnected', {'message': f'Opponent ({nick}) disconnected. Game cancelled, stats not saved.'}, room=opponent_sid)
-                print(f"[GAME] {player_game_id}: Notified {opponent_sid}.")
+                add_player_to_lobby(opponent_sid) 
+                print(f"[GAME] {player_game_id}: Notified opponent {opponent_sid} and moved to lobby.")
             else:
-                print(f"[GAME] {player_game_id}: Remaining player {opponent_sid} also disconnected.")
+                print(f"[GAME] {player_game_id}: Opponent {opponent_sid} also disconnected.")
         elif game.mode == 'solo':
-            print(f"[DISCONNECT] {player_game_id}: Player left training.")
+            print(f"[DISCONNECT] {player_game_id}: Player left training game.")
         
         spectators = game_session_player.get('spectators', [])
-        for spec in spectators:
-            if socketio.server.manager.is_connected(spec['sid'], '/'):
-                emit('opponent_disconnected', {'message': f'Player ({nick}) disconnected. Game ended.'}, room=spec['sid'])
-                add_player_to_lobby(spec['sid'])
-                print(f"[GAME] {player_game_id}: Notified spectator {spec['nickname']}.")
+        for spec_info in spectators:
+             spec_sid = spec_info.get('sid')
+             if spec_sid and socketio.server.manager.is_connected(spec_sid, '/'):
+                 emit('opponent_disconnected', {'message': f'Player ({nick}) disconnected. Game ended.'}, room=spec_sid)
+                 add_player_to_lobby(spec_sid) 
+                 print(f"[GAME] {player_game_id}: Notified spectator {spec_info.get('nickname','?')} and moved to lobby.")
         
         if player_game_id in active_games:
             del active_games[player_game_id]
         
         socketio.close_room(player_game_id)
-        broadcast_lobby_stats()
-        emit_lobby_update()
-        return
+        print(f"[GAME] Closed room {player_game_id} due to player disconnect.")
+        
+        broadcast_lobby_stats() 
+        emit_lobby_update() 
+        return 
 
     spectator_game_id = None
     for room_id, game_session in list(active_games.items()):
+        if room_id not in active_games: continue 
         spectators = game_session.get('spectators', [])
-        if any(spec['sid'] == sid for spec in spectators):
+        found_spectator = False
+        new_spectators = []
+        for spec in spectators:
+            if spec.get('sid') == sid:
+                found_spectator = True
+            else:
+                new_spectators.append(spec)
+                
+        if found_spectator:
             spectator_game_id = room_id
-            game_session['spectators'] = [s for s in spectators if s['sid'] != sid]
+            game_session['spectators'] = new_spectators
             print(f"[SPECTATOR] Spectator {sid} disconnected from {spectator_game_id}.")
-            broadcast_spectator_update(spectator_game_id)
-            broadcast_lobby_stats()
-            emit_lobby_update()
-            break
+            broadcast_spectator_update(spectator_game_id) 
+            broadcast_lobby_stats() 
+            emit_lobby_update() 
+            break 
 
 def validate_telegram_data(init_data_str):
+    # (Без изменений)
     try:
         unquoted = unquote(init_data_str)
         params = dict(item.split('=', 1) for item in unquoted.split('&') if '=' in item)
@@ -587,40 +842,37 @@ def validate_telegram_data(init_data_str):
 
 @socketio.on('login_with_telegram')
 def handle_telegram_login(data):
+    # (Логика запрета новой сессии)
     init_data = data.get('initData')
     sid = request.sid
     if not init_data:
-        emit('auth_status', {'success': False, 'message': 'No data.'})
+        emit('auth_status', {'success': False, 'message': 'Нет данных авторизации.'})
+        disconnect(sid) # Отключаем, если нет данных
         return
     user_info = validate_telegram_data(init_data)
     if not user_info:
-        emit('auth_status', {'success': False, 'message': 'Invalid data.'})
+        emit('auth_status', {'success': False, 'message': 'Неверные данные авторизации.'})
+        disconnect(sid) # Отключаем при неверных данных
         return
     tg_id = user_info.get('id')
     if not tg_id:
-        emit('auth_status', {'success': False, 'message': 'No TG ID.'})
+        emit('auth_status', {'success': False, 'message': 'Не найден Telegram ID.'})
+        disconnect(sid) # Отключаем, если нет ID
         return
 
-    # --- ИЗМЕНЕНИЕ: Новая логика мульти-устройств ---
     if tg_id in tg_id_to_sid:
         old_sid = tg_id_to_sid.get(tg_id)
-        # Проверяем, действительно ли старая сессия еще активна
         if old_sid and old_sid != sid and socketio.server.manager.is_connected(old_sid, '/'):
             print(f"[AUTH] TG ID {tg_id} duplicate login attempt. Rejecting new SID: {sid}")
-            # Отправляем алерт новой сессии и не даем войти
             emit('auth_status', {'success': False, 'message': 'Активная сессия уже запущена с другого устройства.'})
-            return # Не продолжаем, не регистрируем новый sid
-        # Если старая сессия "мертва" (нет в is_connected), то позволяем новой зайти
-        # и перезаписываем SID для этого TG_ID ниже.
+            disconnect(sid) 
+            return 
         elif old_sid and old_sid != sid:
              print(f"[AUTH] TG ID {tg_id} has dead old SID {old_sid}. Allowing new SID {sid}.")
 
-
-    # Если старой сессии нет, или она мертва, регистрируем новую
-    # (или перезаписываем старый мертвый sid)
+    # Обновляем или добавляем связь
     tg_id_to_sid[tg_id] = sid
     sid_to_tg_id[sid] = tg_id
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
     with app.app_context():
         user = User.query.filter_by(telegram_id=tg_id).first()
@@ -635,35 +887,42 @@ def handle_telegram_login(data):
 
 @socketio.on('set_initial_username')
 def handle_set_username(data):
+     # (Без изменений)
     nick = data.get('nickname', '').strip()
     tg_id = data.get('telegram_id')
     sid = request.sid
     if not tg_id:
         emit('auth_status', {'success': False, 'message': 'Error: No TG ID.'})
+        disconnect(sid)
         return
     if not nick or not re.match(r'^[a-zA-Z0-9_-]{3,20}$', nick):
-        emit('auth_status', {'success': False, 'message': 'Nick: 3-20 chars (a-z,0-9,_, -).'})
-        return
+        emit('auth_status', {'success': False, 'message': 'Ник: 3-20 симв. (a-z, 0-9, _, -).'})
+        return # Не отключаем, даем исправить
     
-    # --- ИЗМЕНЕНИЕ: Убрана проверка tg_id_to_sid.get(tg_id) != sid, т.к. мы уже перезаписали ---
+    # Проверяем связь SID<->TG_ID
     if sid_to_tg_id.get(sid) != tg_id:
-         print(f"[AUTH] Mismatch SID/TGID on set_username. SID: {sid}, TG_ID: {tg_id}")
+         print(f"[AUTH] Mismatch SID/TGID on set_username. SID: {sid}, Expected TG_ID: {sid_to_tg_id.get(sid)}, Got: {tg_id}")
          emit('auth_status', {'success': False, 'message': 'Ошибка сессии, перезагрузите.'})
          # Очищаем невалидные данные
-         if tg_id in tg_id_to_sid: del tg_id_to_sid[tg_id]
+         if tg_id in tg_id_to_sid and tg_id_to_sid.get(tg_id) == sid : del tg_id_to_sid[tg_id] 
          if sid in sid_to_tg_id: del sid_to_tg_id[sid]
+         disconnect(sid) 
          return
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
     with app.app_context():
         if User.query.filter_by(nickname=nick).first():
-            emit('auth_status', {'success': False, 'message': 'Nickname taken.'})
-            return
-        # --- ИЗМЕНЕНИЕ: Не проверяем TG_ID в базе, т.к. юзер новый ---
-        # if User.query.filter_by(telegram_id=tg_id).first():
-        #     emit('auth_status', {'success': False, 'message': 'TG ID already registered.'})
-        #     return
-        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+            emit('auth_status', {'success': False, 'message': 'Этот никнейм уже занят.'})
+            return 
+        # Проверка на существующий TG_ID (на случай гонки потоков)
+        existing_user_tg = User.query.filter_by(telegram_id=tg_id).first()
+        if existing_user_tg:
+             emit('auth_status', {'success': False, 'message': 'Этот Telegram аккаунт уже зарегистрирован.'})
+             # Очищаем карты сессий, т.к. регистрация не удалась
+             if tg_id in tg_id_to_sid and tg_id_to_sid.get(tg_id) == sid: del tg_id_to_sid[tg_id]
+             if sid in sid_to_tg_id: del sid_to_tg_id[sid]
+             disconnect(sid)
+             return
+
         try:
             new_user = User(telegram_id=tg_id, nickname=nick)
             db.session.add(new_user)
@@ -673,14 +932,17 @@ def handle_set_username(data):
             emit('auth_status', {'success': True, 'nickname': new_user.nickname})
             emit_lobby_update()
         except Exception as e:
-            if tg_id in tg_id_to_sid: del tg_id_to_sid[tg_id]
+            # Очищаем карты сессий при ошибке регистрации
+            if tg_id in tg_id_to_sid and tg_id_to_sid.get(tg_id) == sid: del tg_id_to_sid[tg_id]
             if sid in sid_to_tg_id: del sid_to_tg_id[sid]
             db.session.rollback()
             print(f"[ERROR] Create user {nick}: {e}")
-            emit('auth_status', {'success': False, 'message': 'Registration error.'})
+            emit('auth_status', {'success': False, 'message': 'Ошибка регистрации в БД.'})
+            disconnect(sid) 
 
 @socketio.on('request_skip_pause')
 def handle_request_skip_pause(data):
+    # (Без изменений)
     room_id = data.get('roomId')
     sid = request.sid
     game_session = active_games.get(room_id)
@@ -707,10 +969,12 @@ def handle_request_skip_pause(data):
 
 @socketio.on('get_leaderboard')
 def handle_get_leaderboard():
+    # (Без изменений)
     emit('leaderboard_data', get_leaderboard_data())
 
 @socketio.on('get_league_clubs')
 def handle_get_league_clubs(data):
+    # (Без изменений)
     league = data.get('league', 'РПЛ')
     league_data = all_leagues_data.get(league, {})
     clubs = sorted(list(league_data.keys()))
@@ -718,6 +982,7 @@ def handle_get_league_clubs(data):
 
 @socketio.on('start_game')
 def handle_start_game(data):
+    # (Без изменений)
     sid = request.sid
     mode = data.get('mode')
     nick = data.get('nickname')
@@ -726,15 +991,13 @@ def handle_start_game(data):
         print(f"[ERROR] Start w/o nickname from {sid}")
         return
     if is_player_busy(sid):
-        print(f"[SECURITY] {nick} ({sid}) busy, start rejected.")
+        print(f"[SECURITY] {nick} ({sid}) is busy, start rejected.")
+        emit('start_game_fail', {'message': 'Вы уже заняты.'})
         return
     if mode == 'solo':
         try:
             time_bank = float(settings.get('time_bank', 90.0))
-            if not (MIN_TIME_BANK <= time_bank <= MAX_TIME_BANK):
-                print(f"[ERROR] {nick} ({sid}) invalid time bank (solo): {time_bank}.")
-                emit('start_game_fail', {'message': f'Время: {MIN_TIME_BANK}-{MAX_TIME_BANK} сек.'})
-                return
+            time_bank = max(MIN_TIME_BANK, min(MAX_TIME_BANK, time_bank))
             settings['time_bank'] = time_bank
         except (ValueError, TypeError):
             emit('start_game_fail', {'message': 'Неверный формат времени.'})
@@ -749,7 +1012,7 @@ def handle_start_game(data):
                 print(f"[ERROR] {nick} ({sid}) solo 0 clubs.")
                 leave_room(room_id)
                 add_player_to_lobby(sid)
-                emit('start_game_fail', {'message': 'No clubs.'})
+                emit('start_game_fail', {'message': 'Не выбраны клубы.'})
                 return
             active_games[room_id] = {'game': game, 'turn_id': None, 'pause_id': None, 'skip_votes': set(), 'last_round_end_reason': None, 'spectators': []}
             remove_player_from_lobby(sid)
@@ -760,15 +1023,15 @@ def handle_start_game(data):
         except Exception as e:
             print(f"[ERROR] Create solo {nick}: {e}")
             leave_room(room_id)
-            if room_id in active_games:
-                del active_games[room_id]
-                add_player_to_lobby(sid)
-            emit('start_game_fail', {'message': 'Server error.'})
+            if room_id in active_games: del active_games[room_id]
+            add_player_to_lobby(sid) 
+            emit('start_game_fail', {'message': 'Ошибка сервера.'})
             broadcast_lobby_stats()
             emit_lobby_update()
 
 @socketio.on('create_game')
 def handle_create_game(data):
+    # (Без изменений)
     sid = request.sid
     nick = data.get('nickname')
     settings = data.get('settings')
@@ -776,159 +1039,204 @@ def handle_create_game(data):
         print(f"[ERROR] Create w/o nickname from {sid}")
         return
     if is_player_busy(sid):
-        print(f"[SECURITY] {nick} ({sid}) busy, create rejected.")
+        print(f"[SECURITY] {nick} ({sid}) is busy, create rejected.")
+        emit('create_game_fail', {'message': 'Вы уже заняты.'})
         return
         
     try:
         time_bank = float(settings.get('time_bank', 90.0))
-        if not (MIN_TIME_BANK <= time_bank <= MAX_TIME_BANK):
-            print(f"[ERROR] {nick} ({sid}) invalid time bank (pvp): {time_bank}.")
-            emit('create_game_fail', {'message': f'Время: {MIN_TIME_BANK}-{MAX_TIME_BANK} сек.'})
-            return
+        time_bank = max(MIN_TIME_BANK, min(MAX_TIME_BANK, time_bank))
         settings['time_bank'] = time_bank
     except (ValueError, TypeError):
         emit('create_game_fail', {'message': 'Неверный формат времени.'})
         return
 
     try:
-        temp_game = GameState({'nickname': nick}, all_leagues_data, mode='pvp', settings=settings)
+        temp_game = GameState({'nickname': nick}, all_leagues_data, mode='pvp', settings=settings.copy())
     except Exception as e:
         print(f"[ERROR] Validation {nick}: {e}")
-        emit('create_game_fail', {'message': 'Settings error.'})
+        emit('create_game_fail', {'message': 'Ошибка настроек.'})
         return
+        
     if temp_game.num_rounds < 3:
         print(f"[ERROR] {nick} ({sid}) pvp < 3 clubs ({temp_game.num_rounds}).")
-        emit('create_game_fail', {'message': 'Min 3 clubs.'})
+        emit('create_game_fail', {'message': f'Мин 3 клуба (выбрано {temp_game.num_rounds}).'})
         return
+        
+    final_settings = temp_game.settings 
+
     room_id = str(uuid.uuid4())
     join_room(room_id)
-    open_games[room_id] = {'creator': {'sid': sid, 'nickname': nick}, 'settings': settings}
+    open_games[room_id] = {'creator': {'sid': sid, 'nickname': nick}, 'settings': final_settings}
     remove_player_from_lobby(sid)
-    print(f"[LOBBY] {nick} ({sid}) created {room_id}. Clubs: {temp_game.num_rounds}, TB: {settings.get('time_bank', 90)}")
+    print(f"[LOBBY] {nick} ({sid}) created PvP game {room_id}. Clubs: {temp_game.num_rounds}, TB: {final_settings['time_bank']}")
     emit_lobby_update()
 
 @socketio.on('cancel_game')
 def handle_cancel_game(data=None):
+    # (Без изменений)
     sid = data.get('sid') if data else request.sid
     room_to_delete = next((rid for rid, g in open_games.items() if g['creator']['sid'] == sid), None)
     if room_to_delete:
-        leave_room(room_to_delete, sid=sid)
-        del open_games[room_to_delete]
-        add_player_to_lobby(sid)
-        print(f"[LOBBY] Creator {sid} cancelled {room_to_delete}.")
+        leave_room(room_to_delete, sid=sid) 
+        if room_to_delete in open_games: del open_games[room_to_delete]
+        add_player_to_lobby(sid) 
+        print(f"[LOBBY] Creator {sid} cancelled open game {room_to_delete}.")
         emit_lobby_update()
 
 @socketio.on('join_game')
 def handle_join_game(data):
+    # (Без изменений)
     joiner_sid = request.sid
     joiner_nick = data.get('nickname')
     creator_sid = data.get('creator_sid')
     if not joiner_nick or not creator_sid:
-        print(f"[ERROR] Invalid join: {data} from {joiner_sid}")
+        print(f"[ERROR] Invalid join data: {data} from {joiner_sid}")
+        emit('join_game_fail', {'message': 'Неверные данные.'})
         return
     if is_player_busy(joiner_sid):
-        print(f"[SECURITY] {joiner_nick} ({joiner_sid}) busy, join rejected.")
+        print(f"[SECURITY] {joiner_nick} ({joiner_sid}) is busy, join rejected.")
+        emit('join_game_fail', {'message': 'Вы уже заняты.'})
         return
     
     joiner_tg_id = sid_to_tg_id.get(joiner_sid)
     creator_tg_id = sid_to_tg_id.get(creator_sid)
     if joiner_tg_id and creator_tg_id and joiner_tg_id == creator_tg_id:
-        print(f"[SECURITY] {joiner_nick} ({joiner_tg_id}) attempted to join own game.")
-        emit('join_game_fail', {'message': 'Нельзя играть с самим собой.'})
+        print(f"[SECURITY] {joiner_nick} ({joiner_tg_id}) attempted to join own game created by {creator_sid}.")
+        emit('join_game_fail', {'message': 'Нельзя играть с собой.'})
         return
 
     room_id = next((rid for rid, g in open_games.items() if g['creator']['sid'] == creator_sid), None)
     if not room_id:
-        print(f"[LOBBY] {joiner_nick} join to {creator_sid} failed (not found).")
-        emit('join_game_fail', {'message': 'Game not found.'})
+        print(f"[LOBBY] {joiner_nick} join to {creator_sid} failed (game not found).")
+        emit('join_game_fail', {'message': 'Игра не найдена.'})
+        emit_lobby_update() 
         return
-    game_info = open_games.pop(room_id)
-    emit_lobby_update()
-    creator_info = game_info['creator']
-    if creator_info['sid'] == joiner_sid:
-        print(f"[SECURITY] {joiner_nick} join own game {room_id}.")
-        open_games[room_id] = game_info
+    
+    if room_id in open_games:
+        game_info = open_games.pop(room_id)
+    else: 
+        print(f"[LOBBY] {joiner_nick} failed to join {room_id}, already removed.")
+        emit('join_game_fail', {'message': 'Игра уже началась.'})
         emit_lobby_update()
         return
+
+    emit_lobby_update() 
+    creator_info = game_info['creator']
+    
+    if not socketio.server.manager.is_connected(creator_info['sid'], '/'):
+        print(f"[LOBBY] Creator {creator_info['nickname']} disconnected before join by {joiner_nick}.")
+        add_player_to_lobby(joiner_sid) 
+        emit('join_game_fail', {'message': 'Создатель отключился.'})
+        return
+
+    if creator_info['sid'] == joiner_sid: 
+        print(f"[SECURITY] {joiner_nick} attempted join own game {room_id} after checks.")
+        open_games[room_id] = game_info 
+        emit_lobby_update()
+        emit('join_game_fail', {'message': 'Нельзя войти в свою игру.'})
+        return
+        
     p1_info = {'sid': creator_info['sid'], 'nickname': creator_info['nickname']}
     p2_info = {'sid': joiner_sid, 'nickname': joiner_nick}
+    
+    remove_player_from_lobby(p1_info['sid']) 
+    remove_player_from_lobby(p2_info['sid']) 
+    
     join_room(room_id, sid=p2_info['sid'])
-    remove_player_from_lobby(p2_info['sid'])
+    
     try:
         game = GameState(p1_info, all_leagues_data, player2_info=p2_info, mode='pvp', settings=game_info['settings'])
         active_games[room_id] = {'game': game, 'turn_id': None, 'pause_id': None, 'skip_votes': set(), 'last_round_end_reason': None, 'spectators': []}
-        broadcast_lobby_stats()
-        emit_lobby_update()
+        
+        broadcast_lobby_stats() 
+        emit_lobby_update() 
+        
         print(f"[GAME] Start PvP: {p1_info['nickname']} vs {p2_info['nickname']}. Room: {room_id}. Clubs: {game.num_rounds}, TB: {game.settings['time_bank']}")
-        start_game_loop(room_id)
+        start_game_loop(room_id) 
+
     except Exception as e:
-         print(f"[ERROR] Create PvP {room_id}: {e}")
+         print(f"[ERROR] Create PvP game {room_id} failed after join: {e}")
          leave_room(room_id, sid=p1_info['sid'])
          leave_room(room_id, sid=p2_info['sid'])
-         if room_id in active_games:
-             del active_games[room_id]
-             add_player_to_lobby(p1_info['sid'])
-             add_player_to_lobby(p2_info['sid'])
-         emit('join_game_fail', {'message': 'Server error.'}, room=p1_info['sid'])
-         emit('join_game_fail', {'message': 'Server error.'}, room=p2_info['sid'])
+         if room_id in active_games: del active_games[room_id]
+         add_player_to_lobby(p1_info['sid'])
+         add_player_to_lobby(p2_info['sid'])
+         emit('join_game_fail', {'message': 'Ошибка сервера.'}, room=p1_info['sid'])
+         emit('join_game_fail', {'message': 'Ошибка сервера.'}, room=p2_info['sid'])
          broadcast_lobby_stats()
          emit_lobby_update()
 
 @socketio.on('join_as_spectator')
 def handle_join_as_spectator(data):
+    # (Без изменений)
     sid = request.sid
     nick = data.get('nickname')
     room_id = data.get('roomId')
     if not nick or not room_id:
-        print(f"[ERROR] Invalid spectate: {data} from {sid}")
+        print(f"[ERROR] Invalid spectate data: {data} from {sid}")
+        emit('spectate_fail', {'message': 'Неверные данные.'})
         return
     if is_player_busy(sid):
-        print(f"[SECURITY] {nick} ({sid}) busy, spectate rejected.")
-        emit('spectate_fail', {'message': 'You are busy.'})
+        print(f"[SECURITY] {nick} ({sid}) is busy, spectate rejected.")
+        emit('spectate_fail', {'message': 'Вы уже заняты.'})
         return
+        
     game_session = active_games.get(room_id)
     if not game_session:
         print(f"[SPECTATOR] Game {room_id} not found for {nick}.")
-        emit('spectate_fail', {'message': 'Game not found.'})
+        emit('spectate_fail', {'message': 'Игра не найдена.'})
+        emit_lobby_update() 
         return
+        
     my_open_game_id = next((rid for rid, g in open_games.items() if g['creator']['sid'] == sid), None)
     if my_open_game_id:
-        print(f"[SPECTATOR] {nick} ({sid}) spectating, cancelling own game {my_open_game_id}.")
-        handle_cancel_game({'sid': sid})
+        print(f"[SPECTATOR] {nick} ({sid}) spectating, cancelling own open game {my_open_game_id}.")
+        handle_cancel_game({'sid': sid}) 
+        
     join_room(room_id, sid=sid)
-    if 'spectators' not in game_session:
-        game_session['spectators'] = []
+    if 'spectators' not in game_session: game_session['spectators'] = []
+    
     game_session['spectators'].append({'sid': sid, 'nickname': nick})
-    remove_player_from_lobby(sid)
-    print(f"[SPECTATOR] {nick} ({sid}) joined {room_id}.")
-    emit('round_started', get_game_state_for_client(game_session, room_id))
-    emit('spectate_success', {'roomId': room_id})
+    
+    remove_player_from_lobby(sid) 
+    print(f"[SPECTATOR] {nick} ({sid}) joined game {room_id}.")
+    
+    emit('round_started', get_game_state_for_client(game_session, room_id), room=sid) # Отправляем только зрителю
+    emit('spectate_success', {'roomId': room_id}, room=sid)
+    
     broadcast_spectator_update(room_id)
     broadcast_lobby_stats()
     emit_lobby_update()
 
 @socketio.on('leave_as_spectator')
 def handle_leave_as_spectator(data):
+    # (Без изменений)
     sid = request.sid
     room_id = data.get('roomId')
     game_session = active_games.get(room_id)
     if not game_session:
-        print(f"[ERROR] Leave non-existent {room_id} spectator {sid}")
+        print(f"[ERROR] Spectator {sid} tried to leave non-existent room {room_id}")
+        add_player_to_lobby(sid) 
         return
-    initial_spectators = game_session.get('spectators', [])
-    game_session['spectators'] = [s for s in initial_spectators if s['sid'] != sid]
-    if len(initial_spectators) > len(game_session['spectators']):
-        leave_room(room_id, sid=sid)
-        add_player_to_lobby(sid)
-        print(f"[SPECTATOR] {sid} left {room_id}.")
-        broadcast_spectator_update(room_id)
-        broadcast_lobby_stats()
-        emit_lobby_update()
+        
+    initial_spectators_count = len(game_session.get('spectators', []))
+    game_session['spectators'] = [s for s in game_session.get('spectators', []) if s.get('sid') != sid]
+    
+    if len(game_session['spectators']) < initial_spectators_count:
+        leave_room(room_id, sid=sid) 
+        add_player_to_lobby(sid) 
+        print(f"[SPECTATOR] {sid} left game {room_id}.")
+        broadcast_spectator_update(room_id) 
+        broadcast_lobby_stats() 
+        emit_lobby_update() 
     else:
-        print(f"[ERROR] Spectator {sid} not found in {room_id} on leave.")
+        print(f"[ERROR] Spectator {sid} not found in room {room_id} on leave attempt.")
+        add_player_to_lobby(sid)
 
 @socketio.on('submit_guess')
 def handle_submit_guess(data):
+     # (Без изменений)
     room_id = data.get('roomId')
     guess = data.get('guess')
     sid = request.sid
@@ -945,7 +1253,7 @@ def handle_submit_guess(data):
     print(f"[GUESS] {room_id}: {nick} '{guess}' -> {result['result']}")
     if result['result'] in ['correct', 'correct_typo']:
         time_spent = time.time() - game.turn_start_time
-        game_session['turn_id'] = None
+        game_session['turn_id'] = None 
         game.time_banks[game.current_player_index] -= time_spent
         if game.time_banks[game.current_player_index] < 0:
             print(f"[TIMEOUT] {room_id}: {nick} correct but time ran out.")
@@ -958,6 +1266,7 @@ def handle_submit_guess(data):
         if game.is_round_over():
             print(f"[ROUND_END] {room_id}: Round complete (all named). Draw 0.5-0.5")
             game_session['last_round_end_reason'] = 'completed'
+            game.last_successful_guesser_index = None # Ничья
             if game.mode == 'pvp':
                 game.scores[0] += 0.5
                 game.scores[1] += 0.5
@@ -970,6 +1279,7 @@ def handle_submit_guess(data):
 
 @socketio.on('surrender_round')
 def handle_surrender(data):
+    # (Без изменений)
     room_id = data.get('roomId')
     sid = request.sid
     game_session = active_games.get(room_id)
@@ -988,10 +1298,199 @@ def handle_surrender(data):
 
 @socketio.on('get_lobby_data')
 def handle_get_lobby_data():
+    # (Без изменений)
     emit_lobby_update()
+
+# --- Новые обработчики реванша ---
+@socketio.on('request_rematch')
+def handle_request_rematch(data):
+    sid = request.sid
+    old_room_id = data.get('old_room_id')
+    
+    # Проверяем ID и наличие данных
+    if not old_room_id or old_room_id not in rematch_data_store:
+        print(f"[REMATCH] Invalid/Expired old_room_id: {old_room_id} from {sid}")
+        emit('rematch_status', {'status': 'error', 'message': 'Игра для реванша не найдена.'}, room=sid)
+        # Возвращаем игрока в лобби, если он не занят чем-то другим
+        add_player_to_lobby(sid)
+        return
+
+    rematch_info = rematch_data_store[old_room_id]
+    
+    # Проверяем, является ли отправитель одним из игроков
+    is_p1 = (sid == rematch_info.get('p1_sid'))
+    is_p2 = (sid == rematch_info.get('p2_sid'))
+    if not is_p1 and not is_p2:
+        print(f"[REMATCH] Unauthorized request from non-player {sid} for {old_room_id}")
+        # Просто игнорируем запрос от зрителя
+        return
+        
+    # Добавляем SID в запросы
+    rematch_info['requests'].add(sid)
+    print(f"[REMATCH] Request received from {sid} for {old_room_id}. Total: {len(rematch_info['requests'])}")
+
+    opponent_sid = rematch_info['p2_sid'] if is_p1 else rematch_info['p1_sid']
+    current_count = len(rematch_info['requests'])
+    status_data = {'status': 'waiting', 'count': current_count, 'old_room_id': old_room_id}
+
+    # Уведомляем игроков и зрителей о статусе (1/2 или 2/2)
+    sids_to_notify = [rematch_info['p1_sid'], rematch_info['p2_sid']] + \
+                     [spec['sid'] for spec in rematch_info.get('spectators', []) if spec.get('sid')]
+
+    for notify_sid in sids_to_notify:
+         if notify_sid and socketio.server.manager.is_connected(notify_sid, '/'):
+              # Убедимся, что получатель все еще в комнате ожидания реванша
+              notify_rooms = socketio.server.manager.get_rooms(notify_sid, '/') or []
+              if old_room_id in notify_rooms:
+                   socketio.emit('rematch_status', status_data, room=notify_sid)
+
+    # Если оба запросили реванш
+    if current_count == 2:
+        print(f"[REMATCH] Both players requested for {old_room_id}. Starting new game.")
+        
+        p1_sid = rematch_info['p1_sid']
+        p2_sid = rematch_info['p2_sid']
+        # Проверяем, что оба игрока все еще онлайн
+        if not socketio.server.manager.is_connected(p1_sid, '/') or \
+           not socketio.server.manager.is_connected(p2_sid, '/'):
+            print(f"[REMATCH] Error: One player disconnected before rematch could start for {old_room_id}")
+            # Уведомляем того, кто онлайн (если есть)
+            online_sid = p1_sid if socketio.server.manager.is_connected(p1_sid, '/') else p2_sid
+            if online_sid:
+                 emit('rematch_status', {'status': 'opponent_left', 'old_room_id': old_room_id}, room=online_sid)
+                 add_player_to_lobby(online_sid) # Возвращаем в лобби
+                 socketio.leave_room(old_room_id, sid=online_sid) # Убираем из старой комнаты
+            # Очищаем данные реванша
+            if old_room_id in rematch_data_store: del rematch_data_store[old_room_id]
+            # Закрываем комнату
+            if socketio.server.manager.room_exists(old_room_id, '/'): socketio.close_room(old_room_id)
+            return
+
+        p1_nick = rematch_info['p1_nick']
+        p2_nick = rematch_info['p2_nick']
+        settings = rematch_info['settings']
+        spectators_info = rematch_info.get('spectators', []) # Список словарей {sid, nickname}
+        
+        new_room_id = str(uuid.uuid4())
+        
+        p1_info = {'sid': p1_sid, 'nickname': p1_nick}
+        p2_info = {'sid': p2_sid, 'nickname': p2_nick}
+        
+        try:
+            game = GameState(p1_info, all_leagues_data, player2_info=p2_info, mode='pvp', settings=settings)
+            
+            # Собираем инфо о зрителях для новой игры
+            new_spectators_list = []
+            for spec_info in spectators_info:
+                 spec_sid = spec_info.get('sid')
+                 if spec_sid and socketio.server.manager.is_connected(spec_sid, '/'):
+                      new_spectators_list.append(spec_info) # Добавляем {sid, nickname}
+
+            active_games[new_room_id] = {'game': game, 'turn_id': None, 'pause_id': None, 'skip_votes': set(), 'last_round_end_reason': None, 'spectators': new_spectators_list}
+            
+            # Перемещаем игроков и зрителей в новую комнату
+            sids_to_move = [p1_sid, p2_sid] + [spec['sid'] for spec in new_spectators_list]
+            for move_sid in sids_to_move:
+                 if socketio.server.manager.room_exists(old_room_id, '/') and move_sid in socketio.server.manager.get_rooms(move_sid, '/'):
+                      socketio.leave_room(old_room_id, sid=move_sid)
+                 socketio.join_room(new_room_id, sid=move_sid)
+            print(f"[REMATCH] Moved {len(sids_to_move)} users from {old_room_id} to {new_room_id}")
+
+            # Закрываем старую комнату
+            if socketio.server.manager.room_exists(old_room_id, '/'):
+                 socketio.close_room(old_room_id)
+                 print(f"[REMATCH] Closed old room {old_room_id}")
+
+            # Очищаем данные реванша
+            del rematch_data_store[old_room_id]
+            
+            # Уведомляем о старте реванша (не обязательно, т.к. сразу придет round_started)
+            # socketio.emit('rematch_started', {'new_room_id': new_room_id}, room=new_room_id) 
+            
+            broadcast_lobby_stats() # Обновит стату с учетом новой игры
+            emit_lobby_update() # Добавит новую игру в список активных
+            
+            print(f"[GAME] Rematch started: {p1_nick} vs {p2_nick}. New Room: {new_room_id}. Clubs: {game.num_rounds}, TB: {game.settings['time_bank']}")
+            
+            # Запускаем игру (он сам вызовет broadcast_spectator_update)
+            start_game_loop(new_room_id)
+
+        except Exception as e:
+             print(f"[ERROR] Failed to start rematch game {new_room_id} from {old_room_id}: {e}")
+             error_data = {'status': 'error', 'message': 'Ошибка старта реванша.'}
+             # Уведомляем игроков (если они еще в старой комнате?)
+             for move_sid in [p1_sid, p2_sid]:
+                  if socketio.server.manager.is_connected(move_sid, '/'):
+                       emit('rematch_status', error_data, room=move_sid)
+                       add_player_to_lobby(move_sid) # Возвращаем в лобби
+                       if socketio.server.manager.room_exists(old_room_id, '/') and move_sid in socketio.server.manager.get_rooms(move_sid, '/'):
+                            socketio.leave_room(old_room_id, sid=move_sid)
+             # Очищаем данные реванша
+             if old_room_id in rematch_data_store: del rematch_data_store[old_room_id]
+             # Закрываем комнату
+             if socketio.server.manager.room_exists(old_room_id, '/'): socketio.close_room(old_room_id)
+             broadcast_lobby_stats()
+             emit_lobby_update()
+
+@socketio.on('leave_game_over_screen')
+def handle_leave_game_over_screen(data):
+    sid = request.sid
+    old_room_id = data.get('old_room_id')
+
+    # Игрок выходит с экрана Game Over (нажал "В лобби")
+    if old_room_id and old_room_id in rematch_data_store:
+        rematch_info = rematch_data_store[old_room_id]
+        opponent_sid = None
+        is_player = False
+        if sid == rematch_info.get('p1_sid'):
+            opponent_sid = rematch_info.get('p2_sid')
+            is_player = True
+        elif sid == rematch_info.get('p2_sid'):
+            opponent_sid = rematch_info.get('p1_sid')
+            is_player = True
+
+        if is_player:
+            print(f"[REMATCH] Player {sid} left game over screen for {old_room_id}.")
+            # Уведомляем оппонента и зрителей
+            if opponent_sid and socketio.server.manager.is_connected(opponent_sid, '/'):
+                 opponent_rooms = socketio.server.manager.get_rooms(opponent_sid, '/') or []
+                 if old_room_id in opponent_rooms:
+                      status_data = {'status': 'opponent_left', 'old_room_id': old_room_id}
+                      socketio.emit('rematch_status', status_data, room=opponent_sid)
+                      print(f"[REMATCH] Notified opponent {opponent_sid}.")
+                      # Перемещаем оппонента в лобби
+                      add_player_to_lobby(opponent_sid)
+                      socketio.leave_room(old_room_id, sid=opponent_sid) # Убираем из старой комнаты
+
+            status_data_spec = {'status': 'player_left', 'old_room_id': old_room_id} 
+            for spec_info in rematch_info.get('spectators', []):
+                 spec_sid = spec_info.get('sid')
+                 if spec_sid and spec_sid != sid and spec_sid != opponent_sid and socketio.server.manager.is_connected(spec_sid, '/'):
+                      spec_rooms = socketio.server.manager.get_rooms(spec_sid, '/') or []
+                      if old_room_id in spec_rooms:
+                           socketio.emit('rematch_status', status_data_spec, room=spec_sid)
+                           # Перемещаем зрителя в лобби
+                           add_player_to_lobby(spec_sid)
+                           socketio.leave_room(old_room_id, sid=spec_sid)
+            
+            # Очищаем данные реванша
+            del rematch_data_store[old_room_id]
+            print(f"[REMATCH] Cleared rematch data for {old_room_id} because player {sid} left.")
+            
+            # Закрываем старую комнату
+            if socketio.server.manager.room_exists(old_room_id, '/'):
+                 socketio.close_room(old_room_id)
+                 print(f"[REMATCH] Closed old room {old_room_id}.")
+
+    # Добавляем вышедшего игрока в лобби (если он еще не там)
+    add_player_to_lobby(sid)
+    # Выходим из старой комнаты (на случай если он еще там)
+    if socketio.server.manager.room_exists(old_room_id, '/') and sid in (socketio.server.manager.get_rooms(sid, '/') or []):
+         socketio.leave_room(old_room_id, sid=sid)
+
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
-# Запуск через Dockerfile
+# (Точка входа для gunicorn/Dockerfile)
